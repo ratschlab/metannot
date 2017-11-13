@@ -2,8 +2,12 @@
 #include<fstream>
 #include<omp.h>
 #include "wavelet_trie_pointer.hpp"
+#include "array_int.hpp"
 
 int main(int argc, char** argv) {
+
+    array_int::array_int tester;
+    bit_test(tester, 0);
 
     const char* njob = std::getenv("NJOBS");
     size_t n_jobs=1;
@@ -48,7 +52,7 @@ int main(int argc, char** argv) {
                 std::cout << "Constructing";
                 if (batch > 0)
                     std::cout << " in parts";
-                size_t lastsize = wtrs.size();
+                //size_t lastsize = wtrs.size();
                 
                 //#pragma omp parallel
                 //#pragma omp single nowait
