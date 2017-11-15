@@ -37,11 +37,12 @@ namespace array_int {
             bool operator!=(const T& b) const;
             array_int& operator&=(const array_int &that);
             bool operator<(const array_int &that) const;
-            template <typename T>
-            array_int operator+(T b) const;
+            //template <typename T>
+            //array_int operator+(T b) const;
             friend std::ostream& operator<<(std::ostream& os, const array_int& a);
-            array_int& operator--();
+            //array_int& operator--();
             indset_type& backend();
+            void set_up_to(size_t i);
     };
 
     array_int::array_int() {
@@ -65,6 +66,11 @@ namespace array_int {
     
     array_int::array_int(const array_int &a) {
         this->indices.insert(a.indices.begin(), a.indices.end());
+    }
+
+    void array_int::set_up_to(size_t i) {
+        for (size_t j=0;j<i;++j)
+            this->indices.insert(this->indices.end(), j);
     }
     
     boost::multiprecision::cpp_int& toint(boost::multiprecision::cpp_int &a) {
@@ -96,11 +102,13 @@ namespace array_int {
         return *this;
     }
 
+    /*
     template <typename T>
     array_int array_int::operator+(T b) const {
         //TODO
         return array_int(toint(*this) + b);
     }
+    */
 
     template <typename T>
     array_int array_int::operator&(T b) const {
@@ -142,6 +150,9 @@ namespace array_int {
     }
     template <typename T>
     array_int array_int::operator<<(T i) const {
+        if (i == 0)
+            return *this;
+        assert(i > 0);
         array_int newinds;
         for (auto it = this->indices.begin(); it != this->indices.end(); ++it)
             newinds.indices.insert(*it + i);
@@ -149,6 +160,9 @@ namespace array_int {
     }
     template <typename T>
     array_int array_int::operator>>(T i) const {
+        if (i == 0)
+            return *this;
+        assert(i > 0);
         array_int newinds;
         for (auto it = this->indices.begin(); it != this->indices.end(); ++it) {
             if (*it >= i)
@@ -158,8 +172,9 @@ namespace array_int {
     }
 
     bool array_int::operator==(const size_t& b) const {
-        if (b == 0 && this->indices.size())
-            return false;
+        if (b == 0) {
+            return !(this->indices.size());
+        }
         boost::multiprecision::cpp_int bigb(b);
         size_t lsb;
         auto it = this->indices.begin();
@@ -195,9 +210,23 @@ namespace array_int {
     }
 
     bool array_int::operator<(const array_int &that) const {
-        return toint(*this) < toint(that);
+        auto it = this->indices.rbegin();
+        auto jt = that.indices.rbegin();
+        while (it != this->indices.rend() && jt != that.indices.rend()) {
+            if (*it != *jt) {
+                return *it < *jt;
+            }
+            ++it;
+            ++jt;
+        }
+        if (it == this->indices.rend()) {
+            return jt != that.indices.rend();
+        } else {
+            return false;
+        }
     }
-    
+   
+    /*
     array_int& array_int::operator--() {
         //TODO
         auto a = --toint(*this);
@@ -205,12 +234,14 @@ namespace array_int {
         this->indices = b.indices;
         return *this;
     }
+    */
 
 
-};
 
-bool bit_test(const array_int::array_int& i, size_t j) {
+bool bit_test(const array_int& i, size_t j) {
     return i.indices.find(j) != i.indices.end();
+}
+
 }
 
 array_int::array_int bit_set(array_int::array_int& i, size_t j) {
@@ -224,10 +255,12 @@ array_int::array_int bit_unset(array_int::array_int& i, size_t j) {
 }
 
 size_t lsb(const array_int::array_int& a) {
+    assert(a.indices.size());
     return *a.indices.begin();
 }
 
 size_t msb(const array_int::array_int& a) {
+    assert(a.indices.size());
     return *a.indices.rbegin();
 }
 

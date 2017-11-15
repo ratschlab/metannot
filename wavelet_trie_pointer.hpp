@@ -37,9 +37,9 @@ bool debug=false;
 
 namespace WaveletTrie {
     typedef boost::multiprecision::cpp_int cpp_int;
-    /*
     typedef bool (*bittest_t)(const cpp_int&, uint32_t i);
     bittest_t bit_test = boost::multiprecision::bit_test;
+    /*
     typedef cpp_int& (*bitset_t)(cpp_int&, uint32_t i);
     bitset_t bit_set = boost::multiprecision::bit_set;
     bitset_t bit_unset = boost::multiprecision::bit_unset;
@@ -51,11 +51,12 @@ namespace WaveletTrie {
     typedef array_int::array_int annot_t;
     //typedef cpp_int annot_t;
     typedef std::vector<annot_t> intvec_t;
+    //typedef sdsl::sd_vector<> beta_t;
     typedef sdsl::rrr_vector<> beta_t;
     typedef beta_t::rank_1_type rank1_t;
     typedef beta_t::rank_0_type rank0_t;
-    typedef array_int::array_int alpha_t;
-    //typedef cpp_int alpha_t;
+    //typedef array_int::array_int alpha_t;
+    typedef cpp_int alpha_t;
     //typedef sdsl::sd_vector<> alpha_t;
     typedef sdsl::bit_vector bv_t;
     //common prefix, allequal, size of block
@@ -102,7 +103,7 @@ namespace WaveletTrie {
             prefix=0lu;
             while (it != end) {
                 //std::cout << it-begin << "\t" << end-begin << "\n";
-                temp = (*it) >> ivb;
+                temp = array_int::toint((*it) >> ivb);
                 clear_after(temp, ive-ivb);
                 //temp &= (alpha_t(1) << (ive-ivb))-1;
                 newcols.push_back(temp);
@@ -141,7 +142,8 @@ namespace WaveletTrie {
             //if (*ivb != 0 && boost::multiprecision::msb(*ivb) >= end) {
             //    return std::make_tuple(1, allequal, 0);
             //}
-            std::get<0>(prefix) = *ivb;
+            //std::get<0>(prefix) = *ivb;
+            std::get<0>(prefix) = array_int::toint(*ivb);
             std::get<1>(prefix) = MAXNUM;
             for (++i;i != ive;++i) {
             //for (size_t i=(sorted ? size-1 : 1);i<size;++i) {
@@ -436,20 +438,24 @@ namespace WaveletTrie {
                 this->child[1] = new Node();
                 //bv_t bv(civ.size());
                 bv_t bv(ive-ivb);
-                alpha_t temp = 0;
-                bit_set(temp, end);
-                --temp;
+                //alpha_t temp = 0;
+                //bit_set(temp, end);
+                //--temp;
+                alpha_t temp;
+                //temp.set_up_to(end);
+                bit_set(temp, end+1);
                 prefix_t cprefix[2] = {std::make_pair(temp, true), std::make_pair(temp, true)};
                 //prefix_t cprefix[2] = {std::make_pair(0, true), std::make_pair(0, true)};
                 bool set[2] = {false, false};
-                size_t lengths[2] = {MAXNUM, MAXNUM};
+                //size_t lengths[2] = {MAXNUM, MAXNUM};
+                size_t lengths[2] = {end+1, end+1};
                 //std::cout << "\n";
                 for (size_t i=0;i<bv.size();++i) {
-                    bv[i] = bit_test(*(ivb+i), length);
+                    bv[i] = array_int::bit_test(*(ivb+i), length);
                     children[bv[i]]->push_back((*(ivb+i)) >> (length+1));
                     if (children[bv[i]]->back() != std::get<0>(cprefix[bv[i]])) {
                         if (!set[bv[i]]) {
-                            std::get<0>(cprefix[bv[i]]) = children[bv[i]]->back();
+                            std::get<0>(cprefix[bv[i]]) = array_int::toint(children[bv[i]]->back());
                             set[bv[i]]=true;
                         } else {
                             lengths[bv[i]] = std::min(lengths[bv[i]], (size_t)lsb((children[bv[i]]->back()) ^ std::get<0>(cprefix[bv[i]])));
@@ -461,7 +467,8 @@ namespace WaveletTrie {
                 }
                 //std::cout << "\n";
                 for (size_t i=0;i<2;++i) {
-                    if (lengths[i] == MAXNUM) {
+                    //if (lengths[i] == MAXNUM) {
+                    if (lengths[i] == end + 1) {
                         lengths[i] = (std::get<0>(cprefix[i]) != 0) ? msb((alpha_t)std::get<0>(cprefix[i]))+1 : 0;
                     } else {
                         std::get<1>(cprefix[i]) = false;
@@ -491,11 +498,12 @@ namespace WaveletTrie {
                 //assert(this->rank0(this->beta.size()) == children[0]->size());
                 assert(children[0]->size());
                 assert(children[1]->size());
-                #pragma omp task shared(cprefix) if(children[0]->size() > TASKMIN)
+                assert(children[0]->size() + children[1]->size() == beta.size());
+                #pragma omp task if (children[0]->size() > TASKMIN)
                 this->child[0]->add(children[0]->begin(), children[0]->end(), begin, end, cprefix[0], sorted, debug);
                 //#pragma omp taskwait
                 //delete children[0];
-                #pragma omp task shared(cprefix) if (children[1]->size() > TASKMIN)
+                #pragma omp task if (children[1]->size() > TASKMIN)
                 this->child[1]->add(children[1]->begin(), children[1]->end(), begin, end, cprefix[1], sorted, debug);
                 //#pragma omp taskwait
                 //delete children[1];
@@ -542,7 +550,7 @@ namespace WaveletTrie {
 
                 //copy over beta
                 //alpha_t cbv = (*(begin+prefix_length) >> ivb) & ((alpha_t(1) << (ive-ivb))-1);
-                alpha_t cbv = *(begin+prefix_length) >> ivb;
+                alpha_t cbv = array_int::toint(*(begin+prefix_length) >> ivb);
                 clear_after(cbv, ive-ivb);
                 //sanity check
                 if (cbv == 0) {
@@ -561,7 +569,7 @@ namespace WaveletTrie {
                 size_t maxsize[2]={0,0};
                 for (size_t i=0;i<bv.size();++i) {
                     for (auto j=begin+prefix_length+1;j!=end;++j) {
-                        if (bit_test(*j, ivb+i)) {
+                        if (array_int::bit_test(*j, ivb+i)) {
                             maxsize[bv[i]] = std::max(maxsize[bv[i]], (size_t)(j-(begin+prefix_length+1)));
                             bit_set(tchildren[bv[i]]->operator[](j-(begin+prefix_length+1)), tsizes[bv[i]]);
                         }
@@ -1031,7 +1039,7 @@ namespace WaveletTrie {
         }
         if (debug)
             std::cout << "\n";
-        return std::make_pair(iv, intvec_t(maxedi));
+        return std::make_pair(iv, intvec_t(maxedi,0));
     }
 
     size_t popcount(const cpp_int &a) {
@@ -1050,7 +1058,7 @@ namespace WaveletTrie {
         return a.indices.size();
     }
 
-    bool midless(const annot_t &a, const annot_t &b, const size_t maxsize) {
+    bool midless(const cpp_int &a, const cpp_int &b, const size_t maxsize) {
         //all zeros
         if (a==0 || b==0)
             return a<b;
@@ -1059,62 +1067,6 @@ namespace WaveletTrie {
             return 1;
         if ((b & (b+1)) == 0)
             return 0;
-        //highest diversity
-        /*
-        size_t apc=0,al=MAXNUM;
-        size_t bpc=0,bl=MAXNUM;
-        bool lownum=0;
-        annot_t ac=a,bc=b;
-        if (ac > 0 || bc > 0) {
-            while (true) {
-                if (ac > 0) {
-                    al = boost::multiprecision::lsb(ac);
-                    boost::multiprecision::bit_unset(ac, al);
-                    apc++;
-                    if (bc == 0)
-                        break;
-                }
-                if (bc > 0) {
-                    bl = boost::multiprecision::lsb(bc);
-                    boost::multiprecision::bit_unset(bc, bl);
-                    bpc++;
-                    if (ac == 0) {
-                        if (bc>0)
-                            bpc++;
-                        break;
-                    }
-                }
-                //check which one has the least set bit
-                if (!lownum && al < MAXNUM && al > bl) {
-                    lownum = 1;
-                }
-            }
-        }
-        */
-        /*
-        size_t as = a.backend().size(), bs = b.backend().size();
-        size_t apc=0, bpc=0;
-        auto al = a.backend().limbs();
-        auto bl = b.backend().limbs();
-        size_t i=0;
-        for (;i<std::min(as,bs);++i) {
-            apc += __builtin_popcount(*al);
-            bpc += __builtin_popcount(*bl);
-            ++al;
-            ++bl;
-        }
-        if (as > bs) {
-            for (;i<as;++i) {
-                apc += __builtin_popcount(*al);
-                ++al;
-            }
-        } else if (as > bs) {
-            for (;i<bs;++i) {
-                bpc += __builtin_popcount(*bl);
-                ++bl;
-            }
-        }
-        */
         size_t apc = popcount(a);
         size_t bpc = popcount(b);
         //if a tie, but the one with the largest indices first
@@ -1125,11 +1077,23 @@ namespace WaveletTrie {
         return abs(maxsize/2-apc) < abs(maxsize/2-bpc);
     }
 
+    bool midless(const array_int::array_int &a, const array_int::array_int &b, const size_t maxsize) {
+        if (a.indices.size() == 0 || b.indices.size() == 0) {
+            return a.indices.size() < b.indices.size();
+        }
+        //TODO
+        //check for all ones
+        if (abs(maxsize/2-a.indices.size()) == abs(maxsize/2-b.indices.size())) {
+            return *a.indices.begin() > *b.indices.begin();
+        }
+        return abs(maxsize/2-a.indices.size()) < abs(maxsize/2-b.indices.size());
+    }
+
     bool intlex(const annot_t &a, const annot_t &b) {
         if (a==b)
             return 0;
         size_t clsb = lsb(a ^ b);
-        return bit_test(a, clsb) == 0;
+        return array_int::bit_test(a, clsb) == 0;
     }
 
     std::pair<intvec_t, intvec_t> construct_transpose(std::ifstream &pfile, size_t begin=0, size_t end=MAXNUM, bool sort=false, bool debug=false) {
@@ -1150,7 +1114,7 @@ namespace WaveletTrie {
                         iv.resize(edi+1);
                     }
                     bit_set(iv.at(edi), maxsize);
-                    assert(bit_test(iv[edi], maxsize));
+                    assert(array_int::bit_test(iv[edi], maxsize));
                 }
                 //if (edi.back() < begin || edi.back() >= end)
                 //    break;
@@ -1169,7 +1133,7 @@ namespace WaveletTrie {
         //for (size_t i=0;i<iv.size();++i)
         //    std::cout << i << "\t" << iv[i] << "\t" << (iv[i] & (iv[i]+1)) << "\n";
         std::cout << "Rearranging columns\n";
-        __gnu_parallel::sort(iv.begin(), iv.end(), std::bind(midless, std::placeholders::_1, std::placeholders::_2, maxsize));
+        __gnu_parallel::sort(iv.begin(), iv.end(), std::bind(static_cast<bool(*)(const annot_t&,const annot_t&,const size_t)>(&midless), std::placeholders::_1, std::placeholders::_2, maxsize));
         //for (size_t i=0;i<iv.size();++i)
         //    std::cout << i << "\t" << iv[i] << "\t" << (iv[i] & (iv[i]+1)) << "\n";
         std::cout << "Constructing rows\n";
@@ -1179,7 +1143,7 @@ namespace WaveletTrie {
             //TODO: replace this with copy_bits
             cannot=0;
             for (size_t j=0;j<iv.size();++j) {
-                if (bit_test(iv[j], i)) {
+                if (array_int::bit_test(iv[j], i)) {
                     bit_set(cannot, j);
                 }
             }
