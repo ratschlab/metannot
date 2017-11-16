@@ -8,7 +8,8 @@
 
 namespace array_int {
 
-    typedef std::set<size_t> indset_type;
+    typedef uint16_t index_t;
+    typedef std::set<index_t> indset_type;
     class array_int {
         public:
             indset_type indices;
@@ -42,14 +43,14 @@ namespace array_int {
             friend std::ostream& operator<<(std::ostream& os, const array_int& a);
             //array_int& operator--();
             indset_type& backend();
-            void set_up_to(size_t i);
+            void set_up_to(index_t i);
     };
 
     array_int::array_int() {
     }
 
     array_int::array_int(boost::multiprecision::cpp_int i) {
-        size_t lsbit;
+        index_t lsbit;
         if (i != 0) {
             while (i) {
                 lsbit = boost::multiprecision::lsb(i);
@@ -68,8 +69,8 @@ namespace array_int {
         this->indices.insert(a.indices.begin(), a.indices.end());
     }
 
-    void array_int::set_up_to(size_t i) {
-        for (size_t j=0;j<i;++j)
+    void array_int::set_up_to(index_t i) {
+        for (index_t j=0;j<i;++j)
             this->indices.insert(this->indices.end(), j);
     }
     
@@ -164,9 +165,8 @@ namespace array_int {
             return *this;
         assert(i > 0);
         array_int newinds;
-        for (auto it = this->indices.begin(); it != this->indices.end(); ++it) {
-            if (*it >= i)
-                newinds.indices.insert(*it - i);
+        for (auto it = this->indices.lower_bound(i); it != this->indices.end(); ++it) {
+            newinds.indices.insert(*it - i);
         }
         return newinds;
     }
@@ -176,7 +176,7 @@ namespace array_int {
             return !(this->indices.size());
         }
         boost::multiprecision::cpp_int bigb(b);
-        size_t lsb;
+        index_t lsb;
         auto it = this->indices.begin();
         while (bigb != 0 && it != this->indices.end()) {
             lsb = boost::multiprecision::lsb(bigb);
@@ -238,28 +238,28 @@ namespace array_int {
 
 
 
-bool bit_test(const array_int& i, size_t j) {
+bool bit_test(const array_int& i, index_t j) {
     return i.indices.find(j) != i.indices.end();
 }
 
 }
 
-array_int::array_int bit_set(array_int::array_int& i, size_t j) {
+array_int::array_int bit_set(array_int::array_int& i, array_int::index_t j) {
     i.indices.insert(j);
     return i;
 }
 
-array_int::array_int bit_unset(array_int::array_int& i, size_t j) {
+array_int::array_int bit_unset(array_int::array_int& i, array_int::index_t j) {
     i.indices.erase(j);
     return i;
 }
 
-size_t lsb(const array_int::array_int& a) {
+array_int::index_t lsb(const array_int::array_int& a) {
     assert(a.indices.size());
     return *a.indices.begin();
 }
 
-size_t msb(const array_int::array_int& a) {
+array_int::index_t msb(const array_int::array_int& a) {
     assert(a.indices.size());
     return *a.indices.rbegin();
 }

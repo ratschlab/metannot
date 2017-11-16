@@ -1,4 +1,4 @@
-CXX=g++ -std=c++11 -fopenmp -g -O3
+CXX=g++ -std=c++11 -fopenmp -g
 HOME=/cluster/home/hmustafa
 CXXFLAGS=-Wall -I$(HOME)/local/include -L$(HOME)/local/lib -I$(HOME)/Applications/DYNAMIC/include -I$(HOME)/Applications/DYNAMIC/include/internal
 LDFLAGS=-lsdsl -lboost_serialization -lpthread

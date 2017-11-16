@@ -98,7 +98,7 @@ namespace WaveletTrie {
         intvec_t::iterator done=end;
         alpha_t prefix=1lu,temp;
         intvec_t newcols;
-        if (ive-ivb) {
+        if (ive > ivb) {
             auto it=begin;
             prefix=0lu;
             while (it != end) {
@@ -181,6 +181,7 @@ namespace WaveletTrie {
             Node();
             void serialize(std::ofstream &os, std::ofstream &oas);
             size_t add(intvec_t::iterator ivb, intvec_t::iterator ive, size_t begin, size_t end, prefix_t prefix, bool sorted=false, bool debug=false);
+            size_t add(intvec_t *iv, size_t begin, size_t end, prefix_t prefix, bool sorted=false, bool debug=false);
             size_t add(size_t ivb, size_t ive, intvec_t::iterator begin, intvec_t::iterator end, bool sorted=false, bool debug=false);
             int move_label_down(size_t ol, size_t add=0);
             void append(Node *other, bool leftorright=false, size_t addme=0, size_t addother=0, bool debug=false);
@@ -294,7 +295,7 @@ namespace WaveletTrie {
             size_t maxannot=0;
             Node *root=NULL;
             WTR();
-            WTR(intvec_t &iv, bool transpose, size_t osize, size_t batch, bool sorted=false, bool debug=false);
+            WTR(intvec_t *iv, bool transpose, size_t osize, size_t batch, bool sorted=false, bool debug=false);
             //WTR(intvec_t &iv, size_t begin, size_t end, size_t transpose, bool sorted=false, bool debug=false);
             //WTR(intvec_t &iv, intvec_t &tiv, size_t begin=0, size_t end=MAXNUM, bool sorted=false, bool debug=false);
             //WTR(intvec_t &cols, size_t row, size_t nrows, bool sorted=false, bool debug=false);
@@ -415,18 +416,110 @@ namespace WaveletTrie {
         }
     }
 
+    typedef std::tuple<Node*, intvec_t*, prefix_t> nodestate_t;
+
+    void process_node(std::vector<nodestate_t> *nodes, nodestate_t curnode) {
+        std::pair<nodestate_t, nodestate_t> return_value;
+        if (std::get<1>(curnode)) {
+            if (std::get<1>(curnode)->size()) {
+                std::get<0>(curnode)->alpha = std::get<0>(std::get<2>(curnode));
+                size_t length = msb(std::get<0>(curnode)->alpha);
+                if (!std::get<1>(std::get<2>(curnode))) {
+                    intvec_t* children[2] = {new intvec_t(), new intvec_t()};
+                    std::get<0>(curnode)->child[0] = new Node();
+                    std::get<0>(curnode)->child[1] = new Node();
+                    bv_t bv(std::get<1>(curnode)->size());
+                    annot_t prefices[2];
+                    bit_set(prefices[0], MAXNUM-1);
+                    bit_set(prefices[1], MAXNUM-1);
+                    prefix_t cprefix[2] = {std::make_pair(0, true), std::make_pair(0, true)};
+                    bool set[2] = {false, false};
+                    size_t lengths[2] = {MAXNUM-1, MAXNUM-1};
+                    for (size_t i=0;i<bv.size();++i) {
+                        bv[i] = array_int::bit_test(std::get<1>(curnode)->operator[](i), length);
+                        children[bv[i]]->push_back(std::get<1>(curnode)->operator[](i) >> (length+1));
+                        if (children[bv[i]]->back() != prefices[bv[i]]) {
+                            if (!set[bv[i]]) {
+                                prefices[bv[i]] = array_int::toint(children[bv[i]]->back());
+                                set[bv[i]]=true;
+                            } else {
+                                lengths[bv[i]] = std::min(lengths[bv[i]], (size_t)lsb((children[bv[i]]->back()) ^ prefices[bv[i]]));
+                                clear_after(prefices[bv[i]], lengths[bv[i]]);
+                            }
+                        }
+                    }
+                    for (size_t i=0;i<2;++i) {
+                        std::get<0>(cprefix[i]) = array_int::toint(prefices[i]);
+                        if (lengths[i] == MAXNUM-1) {
+                            lengths[i] = (std::get<0>(cprefix[i]) != 0) ? msb((alpha_t)std::get<0>(cprefix[i]))+1 : 0;
+                        } else {
+                            std::get<1>(cprefix[i]) = false;
+                        }
+                        //set the last bit to indicate the length of the prefix
+                        bit_set(std::get<0>(cprefix[i]), lengths[i]);
+                    }
+                    beta_t beta(bv);
+                    std::get<0>(curnode)->beta = beta;
+                    sdsl::util::init_support(std::get<0>(curnode)->rank1, &(std::get<0>(curnode)->beta));
+                    sdsl::util::init_support(std::get<0>(curnode)->rank0, &(std::get<0>(curnode)->beta));
+                    assert(children[0]->size());
+                    assert(children[1]->size());
+                    return_value = std::make_pair(std::make_tuple(std::get<0>(curnode)->child[0], children[0], cprefix[0]), std::make_tuple(std::get<0>(curnode)->child[1], children[1], cprefix[1]));
+                } else {
+                    std::get<0>(curnode)->breakleaf(std::get<1>(curnode)->size());
+                    return_value = std::make_pair(nodestate_t(NULL, NULL, prefix_t()), nodestate_t(NULL, NULL, prefix_t()));
+                }
+            } else {
+                std::get<0>(curnode)->breakleaf(std::get<1>(curnode)->size());
+                return_value = std::make_pair(nodestate_t(NULL, NULL, prefix_t()), nodestate_t(NULL, NULL, prefix_t()));
+            }
+            delete std::get<1>(curnode);
+            std::get<1>(curnode) = NULL;
+            if (std::get<0>(return_value.first)) {
+                #pragma omp critical
+                {
+                    nodes->push_back(return_value.first);
+                    nodes->push_back(return_value.second);
+                }
+            }
+        }
+    }
+
+    size_t Node::add(intvec_t *iv, size_t begin, size_t end, prefix_t prefix, bool sorted, bool debug) {
+        std::vector<nodestate_t> nodes;
+        nodes.push_back(std::make_tuple(this, iv, prefix));
+        size_t i=0;
+        #pragma omp parallel shared(i, nodes)
+        #pragma omp single nowait
+        {
+            while (true) {
+                nodestate_t curnode = nodes[i];
+                #pragma omp task shared(nodes)
+                process_node(&nodes, curnode);
+                ++i;
+                if (i == nodes.size()) {
+                    //If the end has been reached, wait to make sure all pushes have been done
+                    #pragma omp taskwait
+                    {
+                        //std::cerr << "Waiting\n";
+                        if (i == nodes.size()) {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        return 0;
+    }
+
     size_t Node::add(intvec_t::iterator ivb, intvec_t::iterator ive, size_t begin, size_t end, prefix_t prefix, bool sorted, bool debug) {
-        if (ive-ivb > 0 && end > begin) {
+        if (ive > ivb && end > begin) {
             if (debug)
                 std::cout << ive - ivb << "\n";
-            //prefix_t test = longest_prefix(ivb, ive, begin, end, sorted, debug);
             if (debug)
                 std::cout << ive-ivb << "\t" << std::get<0>(prefix) << "\t" << std::get<1>(prefix) << "\n";
             this->alpha = std::get<0>(prefix);
             size_t length = msb(std::get<0>(prefix));
-            //if (!length && prefix.second) {
-            //    assert(prefix.first == 1);
-            //} else {
             if (!std::get<1>(prefix)) {
                 intvec_t* children[2] = {new intvec_t(), new intvec_t()};
                 //std::cout << ive-ivb << "\t" << std::get<1>(prefix) << "\n";
@@ -436,37 +529,37 @@ namespace WaveletTrie {
                 }
                 this->child[0] = new Node();
                 this->child[1] = new Node();
-                //bv_t bv(civ.size());
                 bv_t bv(ive-ivb);
                 //alpha_t temp = 0;
                 //bit_set(temp, end);
                 //--temp;
-                alpha_t temp;
+                annot_t prefices[2];
+                bit_set(prefices[0], end+1);
+                bit_set(prefices[1], end+1);
                 //temp.set_up_to(end);
-                bit_set(temp, end+1);
-                prefix_t cprefix[2] = {std::make_pair(temp, true), std::make_pair(temp, true)};
-                //prefix_t cprefix[2] = {std::make_pair(0, true), std::make_pair(0, true)};
+                prefix_t cprefix[2] = {std::make_pair(0, true), std::make_pair(0, true)};
                 bool set[2] = {false, false};
-                //size_t lengths[2] = {MAXNUM, MAXNUM};
                 size_t lengths[2] = {end+1, end+1};
-                //std::cout << "\n";
                 for (size_t i=0;i<bv.size();++i) {
                     bv[i] = array_int::bit_test(*(ivb+i), length);
                     children[bv[i]]->push_back((*(ivb+i)) >> (length+1));
-                    if (children[bv[i]]->back() != std::get<0>(cprefix[bv[i]])) {
+                    if (children[bv[i]]->back() != prefices[bv[i]]) {
+                    //if (children[bv[i]]->back() != std::get<0>(cprefix[bv[i]])) {
                         if (!set[bv[i]]) {
-                            std::get<0>(cprefix[bv[i]]) = array_int::toint(children[bv[i]]->back());
+                            //std::get<0>(cprefix[bv[i]]) = array_int::toint(children[bv[i]]->back());
+                            prefices[bv[i]] = array_int::toint(children[bv[i]]->back());
                             set[bv[i]]=true;
                         } else {
-                            lengths[bv[i]] = std::min(lengths[bv[i]], (size_t)lsb((children[bv[i]]->back()) ^ std::get<0>(cprefix[bv[i]])));
+                            lengths[bv[i]] = std::min(lengths[bv[i]], (size_t)lsb((children[bv[i]]->back()) ^ prefices[bv[i]]));
+                            //lengths[bv[i]] = std::min(lengths[bv[i]], (size_t)lsb((children[bv[i]]->back()) ^ std::get<0>(cprefix[bv[i]])));
                             //std::get<0>(cprefix[bv[i]]) &= (alpha_t(1) << lengths[bv[i]])-1;
-                            clear_after(std::get<0>(cprefix[bv[i]]), lengths[bv[i]]);
+                            //clear_after(std::get<0>(cprefix[bv[i]]), lengths[bv[i]]);
+                            clear_after(prefices[bv[i]], lengths[bv[i]]);
                         }
                     }
-                    //std::cout << "p" << bv[i] << "\t" << children[bv[i]]->back() << "\t" << std::get<0>(cprefix[bv[i]]) << "," << std::get<1>(cprefix[bv[i]]) << "\t";
                 }
-                //std::cout << "\n";
                 for (size_t i=0;i<2;++i) {
+                    std::get<0>(cprefix[i]) = array_int::toint(prefices[i]);
                     //if (lengths[i] == MAXNUM) {
                     if (lengths[i] == end + 1) {
                         lengths[i] = (std::get<0>(cprefix[i]) != 0) ? msb((alpha_t)std::get<0>(cprefix[i]))+1 : 0;
@@ -475,42 +568,25 @@ namespace WaveletTrie {
                     }
                     //set the last bit to indicate the length of the prefix
                     bit_set(std::get<0>(cprefix[i]), lengths[i]);
-                    //prefix_t test = longest_prefix(children[i]->begin(), children[i]->end(), begin, end, sorted, debug);
-                    //if (std::get<0>(test) != std::get<0>(cprefix[i]) || std::get<1>(test) != std::get<1>(cprefix[i])) {
-                    //    std::cerr << "\nFail prefix" << i << "\niv\t";
-                    //    for (auto it=children[i]->begin(); it!=children[i]->end(); ++it)
-                    //        std::cerr << *it << "\t";
-                    //    std::cerr << "\npre\t";
-                    //    std::cerr << std::get<0>(test) << "\t" << std::get<0>(cprefix[i]) << "\nall\t";
-                    //    std::cerr << std::get<1>(test) << "\t" << std::get<1>(cprefix[i]) << "\n";
-                    //    assert(false);
-                    //}
                 }
-                //if (debug)
-                //    std::cout << children[bv[i]]->back() << ",";
-                //if (debug)
-                //    std::cout << "\t";
                 beta_t beta(bv);
                 this->beta = beta;
                 sdsl::util::init_support(this->rank1, &(this->beta));
                 sdsl::util::init_support(this->rank0, &(this->beta));
-                //assert(this->rank1(this->beta.size()) == children[1]->size());
-                //assert(this->rank0(this->beta.size()) == children[0]->size());
                 assert(children[0]->size());
                 assert(children[1]->size());
-                assert(children[0]->size() + children[1]->size() == beta.size());
                 #pragma omp task if (children[0]->size() > TASKMIN)
-                this->child[0]->add(children[0]->begin(), children[0]->end(), begin, end, cprefix[0], sorted, debug);
-                //#pragma omp taskwait
-                //delete children[0];
+                this->child[0]->add(children[0]->begin(), children[0]->end(), begin+length+1, end, cprefix[0], sorted, debug);
+                #pragma omp taskwait
+                delete children[0];
                 #pragma omp task if (children[1]->size() > TASKMIN)
-                this->child[1]->add(children[1]->begin(), children[1]->end(), begin, end, cprefix[1], sorted, debug);
-                //#pragma omp taskwait
-                //delete children[1];
+                this->child[1]->add(children[1]->begin(), children[1]->end(), begin+length+1, end, cprefix[1], sorted, debug);
+                #pragma omp taskwait
+                delete children[1];
                 #pragma omp taskwait
                 {
-                    delete children[0];
-                    delete children[1];
+                    //delete children[0];
+                    //delete children[1];
                     for (size_t i=0;i<2;++i) {
                         assert(this->child[i] != NULL);
                         if (this->child[i]->alpha == 0) {
@@ -523,9 +599,6 @@ namespace WaveletTrie {
                 this->breakleaf(ive-ivb);
             }
             return ive-ivb;
-        //} else {
-            //std::cerr << "Input empty vector\n";
-            //assert(false);
         } else {
             this->breakleaf(ive-ivb);
         }
@@ -873,29 +946,30 @@ namespace WaveletTrie {
 
 
     //when transpose is true, osize is the number of rows, otherwise, it's the number of columns
-    WTR::WTR(intvec_t &iv, bool transpose, size_t osize, size_t batch, bool sorted, bool debug) {
+    WTR::WTR(intvec_t *iv, bool transpose, size_t osize, size_t batch, bool sorted, bool debug) {
         //this->sorted = sorted;
         if (std::getenv("DEBUG") != NULL)
             debug=true;
         this->root = new Node();
-        if (batch != 0 && iv.size() != 0) {
+        if (batch != 0 && iv->size() != 0) {
         size_t tsize=0;
         prefix_t prefix;
         //std::cout << "Computing alpha\n";
         if (transpose) {
             //prefix = longest_prefix_transpose(0, std::min(batch, osize), iv.begin(), iv.end(), sorted, debug);
             //std::cout << "Computing wavelet trie\n";
-            #pragma omp parallel
-            #pragma omp single nowait
-            this->root->add(0, std::min(batch, osize), iv.begin(), iv.end(), sorted, debug);
             tsize = osize;
-        } else {
-            prefix = longest_prefix(iv.begin(), std::min(iv.begin()+batch, iv.end()), 0, osize, sorted, debug); 
-            //std::cout << "Computing wavelet trie\n";
             #pragma omp parallel
             #pragma omp single nowait
-            this->root->add(iv.begin(), std::min(iv.begin()+batch, iv.end()), 0, osize, prefix, sorted, debug); 
-            tsize = iv.size();
+            this->root->add(0, std::min(batch, osize), iv->begin(), iv->end(), sorted, debug);
+        } else {
+            prefix = longest_prefix(iv->begin(), std::min(iv->begin()+batch, iv->end()), 0, osize, sorted, debug); 
+            //std::cout << "Computing wavelet trie\n";
+            tsize = iv->size();
+            //#pragma omp parallel
+            //#pragma omp single nowait
+            this->root->add(iv, 0, osize, prefix, sorted, debug); 
+            //this->root->add(iv.begin(), std::min(iv.begin()+batch, iv.end()), 0, osize, prefix, sorted, debug); 
         }
         if (debug) {
             this->print();
@@ -915,14 +989,15 @@ namespace WaveletTrie {
                 //other->add(cursize, std::min(cursize+batch, osize), iv.begin(), iv.end(), sorted, debug);
                 //std::cout << "Computing wavelet trie\n";
                 //prefix = longest_prefix_transpose(cursize, std::min(cursize+batch, osize), iv.begin(), iv.end(), sorted, debug);
-                others[cursize/batch-1]->add(cursize, std::min(cursize+batch, osize), iv.begin(), iv.end(), sorted, debug);
+                others[cursize/batch-1]->add(cursize, std::min(cursize+batch, osize), iv->begin(), iv->end(), sorted, debug);
             } else {
                 //#pragma omp parallel
                 //#pragma omp single nowait
                 //other->add(iv.begin()+cursize, std::min(iv.begin()+cursize+batch, iv.end()), 0, osize, sorted, debug); 
                 //std::cout << "Computing wavelet trie\n";
-                prefix = longest_prefix(iv.begin()+cursize, std::min(iv.begin()+cursize+batch, iv.end()), 0, osize, sorted, debug); 
-                others[cursize/batch-1]->add(iv.begin()+cursize, std::min(iv.begin()+cursize+batch, iv.end()), 0, osize, prefix, sorted, debug); 
+                prefix = longest_prefix(iv->begin()+cursize, std::min(iv->begin()+cursize+batch, iv->end()), 0, osize, sorted, debug); 
+                others[cursize/batch-1]->add(iv, 0, osize, prefix, sorted, debug); 
+                //others[cursize/batch-1]->add(iv.begin()+cursize, std::min(iv.begin()+cursize+batch, iv.end()), 0, osize, prefix, sorted, debug); 
             }
             if ((cursize/batch-1) % 100 == 0)
                 std::cout << "\n";
@@ -1001,8 +1076,8 @@ namespace WaveletTrie {
         return this->reconstruct(iv.begin(), iv.end());
     }
 
-    std::pair<intvec_t, intvec_t> construct(std::ifstream &pfile, size_t begin=0, size_t end=MAXNUM, bool debug=false) {
-        intvec_t iv;
+    std::pair<intvec_t*, intvec_t*> construct(std::ifstream &pfile, size_t begin=0, size_t end=MAXNUM, bool debug=false) {
+        intvec_t* iv = new intvec_t();
         std::string line, ed;
         annot_t cannot, ctemp;
         size_t edi = 0, maxedi=0;
@@ -1031,15 +1106,15 @@ namespace WaveletTrie {
                 }
             }
             //if (edi >= begin && edi < end)
-            iv.push_back(cannot);
-            if (iv.size() == begin)
+            iv->push_back(cannot);
+            if (iv->size() == begin)
                 break;
             if (debug)
-                std::cout << "\t" << iv.back() << "\n";
+                std::cout << "\t" << iv->back() << "\n";
         }
         if (debug)
             std::cout << "\n";
-        return std::make_pair(iv, intvec_t(maxedi,0));
+        return std::make_pair(iv, new intvec_t(maxedi,0));
     }
 
     size_t popcount(const cpp_int &a) {
@@ -1096,9 +1171,9 @@ namespace WaveletTrie {
         return array_int::bit_test(a, clsb) == 0;
     }
 
-    std::pair<intvec_t, intvec_t> construct_transpose(std::ifstream &pfile, size_t begin=0, size_t end=MAXNUM, bool sort=false, bool debug=false) {
+    std::pair<intvec_t*, intvec_t*> construct_transpose(std::ifstream &pfile, size_t begin=0, size_t end=MAXNUM, bool sort=false, bool debug=false) {
         //std::map<size_t, annot_t> iv;
-        intvec_t iv;
+        intvec_t *iv = new intvec_t();
         std::string line, ed;
         //std::vector<size_t> edi;
         size_t edi=0;
@@ -1110,11 +1185,11 @@ namespace WaveletTrie {
                 //edi.push_back(atol(ed.c_str()));
                 edi = atol(ed.c_str());
                 if (edi) {
-                    if (edi >= iv.size()) {
-                        iv.resize(edi+1);
+                    if (edi >= iv->size()) {
+                        iv->resize(edi+1);
                     }
-                    bit_set(iv.at(edi), maxsize);
-                    assert(array_int::bit_test(iv[edi], maxsize));
+                    bit_set(iv->at(edi), maxsize);
+                    assert(array_int::bit_test(iv->operator[](edi), maxsize));
                 }
                 //if (edi.back() < begin || edi.back() >= end)
                 //    break;
@@ -1133,17 +1208,17 @@ namespace WaveletTrie {
         //for (size_t i=0;i<iv.size();++i)
         //    std::cout << i << "\t" << iv[i] << "\t" << (iv[i] & (iv[i]+1)) << "\n";
         std::cout << "Rearranging columns\n";
-        __gnu_parallel::sort(iv.begin(), iv.end(), std::bind(static_cast<bool(*)(const annot_t&,const annot_t&,const size_t)>(&midless), std::placeholders::_1, std::placeholders::_2, maxsize));
+        __gnu_parallel::sort(iv->begin(), iv->end(), std::bind(static_cast<bool(*)(const annot_t&,const annot_t&,const size_t)>(&midless), std::placeholders::_1, std::placeholders::_2, maxsize));
         //for (size_t i=0;i<iv.size();++i)
         //    std::cout << i << "\t" << iv[i] << "\t" << (iv[i] & (iv[i]+1)) << "\n";
         std::cout << "Constructing rows\n";
         annot_t cannot;
-        intvec_t iv_order;
+        intvec_t *iv_order = new intvec_t();
         for (size_t i=0;i<maxsize;++i) {
             //TODO: replace this with copy_bits
             cannot=0;
-            for (size_t j=0;j<iv.size();++j) {
-                if (array_int::bit_test(iv[j], i)) {
+            for (size_t j=0;j<iv->size();++j) {
+                if (array_int::bit_test(iv->operator[](j), i)) {
                     bit_set(cannot, j);
                 }
             }
@@ -1154,11 +1229,11 @@ namespace WaveletTrie {
                 }
             }
             */
-            iv_order.push_back(cannot);
+            iv_order->push_back(cannot);
         }
         if (sort) {
             std::cout << "Sorting rows\n";
-            __gnu_parallel::sort(iv_order.begin(), iv_order.end(), intlex);
+            __gnu_parallel::sort(iv_order->begin(), iv_order->end(), intlex);
         }
         //sanity check
         /*

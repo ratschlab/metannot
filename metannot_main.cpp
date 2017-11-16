@@ -23,12 +23,12 @@ int main(int argc, char** argv) {
     size_t batch = atol(argv[1]);
     bool reconst = atoi(argv[2]);
     std::vector<WaveletTrie::WTR*> wtrs;
-    std::vector<std::pair<WaveletTrie::intvec_t, WaveletTrie::intvec_t>* > ivs;
+    std::vector<std::pair<WaveletTrie::intvec_t*, WaveletTrie::intvec_t*>* > ivs;
     WaveletTrie::intvec_t riv;
     for (int i=3;i<argc-1;++i) {
         std::ifstream pfile(argv[i]);
         bool debug=(std::getenv("DEBUG") != NULL);
-        std::pair<WaveletTrie::intvec_t, WaveletTrie::intvec_t> iv;
+        std::pair<WaveletTrie::intvec_t*, WaveletTrie::intvec_t*> iv;
         if (pfile.good()) {
             std::cout << "Reading\n";
             if (std::getenv("REARRANGE") != NULL) {
@@ -41,10 +41,10 @@ int main(int argc, char** argv) {
                 if (batch > 0)
                     std::cout << " in parts";
                 std::cout << "\n";
-                wtrs.push_back(new WaveletTrie::WTR(iv.second, 1, iv.first.size(), batch == 0 ? iv.first.size() : batch));
+                wtrs.push_back(new WaveletTrie::WTR(iv.second, 1, iv.first->size(), batch == 0 ? iv.first->size() : batch));
                 if (reconst) {
-                    assert(wtrs.back()->reconstruct(iv.first));
-                    riv.insert(riv.end(), iv.first.begin(), iv.first.end());
+                    assert(wtrs.back()->reconstruct(*iv.first));
+                    riv.insert(riv.end(), iv.first->begin(), iv.first->end());
                     std::cout << "Passed test\n";
                 }
                 //wtrs.push_back(new WaveletTrie::WTR(iv.second, 0, batch==0 ? iv.second.size() : batch, iv.first.size()));
@@ -60,7 +60,7 @@ int main(int argc, char** argv) {
                     while (!pfile.eof()) {
                         ivs.push_back(NULL);
                         size_t k = ivs.size()-1;
-                        ivs[k] = new std::pair<WaveletTrie::intvec_t, WaveletTrie::intvec_t>(WaveletTrie::construct(pfile, batch, MAXNUM, debug));
+                        ivs[k] = new std::pair<WaveletTrie::intvec_t*, WaveletTrie::intvec_t*>(WaveletTrie::construct(pfile, batch, MAXNUM, debug));
                         std::cout << "." << std::flush;
                         if ((k+1) % 100 == 0)
                             std::cout << "\n";
@@ -68,18 +68,19 @@ int main(int argc, char** argv) {
                         if (reconst) {
                             //assert(wtrs.back()->reconstruct(iv.first));
                             //std::cout << "Passed test\n";
-                            riv.insert(riv.end(), ivs[k]->first.begin(), ivs[k]->first.end());
+                            riv.insert(riv.end(), ivs[k]->first->begin(), ivs[k]->first->end());
                         }
                         //#pragma omp taskwait
-                        assert(batch==0 || iv.first.size() <= batch);
+                        //assert(batch==0 || iv.first->size() <= batch);
                         //TODO: only spawn thread when a certain amount of memory is available
                         //#pragma omp task shared(wtrs,iv)
                         //{
-                            wtrs[k] = new WaveletTrie::WTR(ivs[k]->first, 0, ivs[k]->second.size(), ivs[k]->first.size());
-                            //wtrs[k] = new WaveletTrie::WTR(ivs[k]->first, 0, ivs[k]->second.size(), batch==0 ? ivs[k]->first.size() : batch);
-                            delete ivs[k];
-                            //assert(wtrs[k]->reconstruct(iv.first));
-                            //std::cout << "Passed test\n";
+                        wtrs[k] = new WaveletTrie::WTR(ivs[k]->first, 0, ivs[k]->second->size(), ivs[k]->first->size());
+                        //wtrs[k] = new WaveletTrie::WTR(ivs[k]->first, 0, ivs[k]->second.size(), batch==0 ? ivs[k]->first.size() : batch);
+                        delete ivs[k]->second;
+                        delete ivs[k];
+                        //assert(wtrs[k]->reconstruct(iv.first));
+                        //std::cout << "Passed test\n";
                         //}
                         //wtrs.push_back(new WaveletTrie::WTR(iv.first, 0, iv.second.size(), batch==0 ? iv.first.size() : batch));
                     }
