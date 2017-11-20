@@ -1,6 +1,6 @@
 CXX=g++ -std=c++11 -fopenmp -g
 HOME=/cluster/home/hmustafa
-CXXFLAGS=-Wall -I$(HOME)/local/include -L$(HOME)/local/lib -I$(HOME)/Applications/DYNAMIC/include -I$(HOME)/Applications/DYNAMIC/include/internal
+CXXFLAGS=-Wall -I$(HOME)/local/include -L$(HOME)/local/lib
 LDFLAGS=-lsdsl -lboost_serialization -lpthread
 
 all: metannot

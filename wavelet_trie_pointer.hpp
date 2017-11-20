@@ -416,11 +416,10 @@ namespace WaveletTrie {
         }
     }
 
-    typedef std::tuple<Node*, intvec_t*, prefix_t> nodestate_t;
+    typedef std::tuple<Node*, intvec_t*, prefix_t, size_t> nodestate_t;
 
-    void process_node(std::vector<nodestate_t> *nodes, nodestate_t curnode) {
-        std::pair<nodestate_t, nodestate_t> return_value;
-        if (std::get<1>(curnode)) {
+    bool process_node(nodestate_t &curnode) {
+        while (std::get<1>(curnode)) {
             if (std::get<1>(curnode)->size()) {
                 std::get<0>(curnode)->alpha = std::get<0>(std::get<2>(curnode));
                 size_t length = msb(std::get<0>(curnode)->alpha);
@@ -464,39 +463,80 @@ namespace WaveletTrie {
                     sdsl::util::init_support(std::get<0>(curnode)->rank0, &(std::get<0>(curnode)->beta));
                     assert(children[0]->size());
                     assert(children[1]->size());
-                    return_value = std::make_pair(std::make_tuple(std::get<0>(curnode)->child[0], children[0], cprefix[0]), std::make_tuple(std::get<0>(curnode)->child[1], children[1], cprefix[1]));
+                    delete std::get<1>(curnode);
+                    nodestate_t leftnode = std::make_tuple(std::get<0>(curnode)->child[0], children[0], cprefix[0], std::get<3>(curnode));
+                    nodestate_t rightnode = std::make_tuple(std::get<0>(curnode)->child[1], children[1], cprefix[1], std::get<3>(curnode));
+                    if (lengths[0] > lengths[1]) {
+                        #pragma omp task if (children[0]->size() > TASKMIN)
+                        process_node(leftnode);
+                        curnode = rightnode;
+                    } else {
+                        #pragma omp task if (children[1]->size() > TASKMIN)
+                        process_node(rightnode);
+                        curnode = leftnode;
+                    }
+                    //return_value = std::make_pair(\
+                    //        std::make_tuple(std::get<0>(curnode)->child[0], children[0], cprefix[0], std::get<3>(curnode)), \
+                    //        std::make_tuple(std::get<0>(curnode)->child[1], children[1], cprefix[1], std::get<3>(curnode)));
                 } else {
                     std::get<0>(curnode)->breakleaf(std::get<1>(curnode)->size());
-                    return_value = std::make_pair(nodestate_t(NULL, NULL, prefix_t()), nodestate_t(NULL, NULL, prefix_t()));
+                    delete std::get<1>(curnode);
+                    std::get<1>(curnode) = NULL;
+                    return true;
+                    //return_value = std::make_pair(\
+                    //        nodestate_t(NULL, NULL, prefix_t(), std::get<3>(curnode)), \
+                    //        nodestate_t(NULL, NULL, prefix_t(), std::get<3>(curnode)));
                 }
             } else {
                 std::get<0>(curnode)->breakleaf(std::get<1>(curnode)->size());
-                return_value = std::make_pair(nodestate_t(NULL, NULL, prefix_t()), nodestate_t(NULL, NULL, prefix_t()));
+                delete std::get<1>(curnode);
+                std::get<1>(curnode) = NULL;
+                return true;
+                //return_value = std::make_pair(\
+                //        nodestate_t(NULL, NULL, prefix_t(), std::get<3>(curnode)), \
+                //        nodestate_t(NULL, NULL, prefix_t(), std::get<3>(curnode)));
             }
-            delete std::get<1>(curnode);
-            std::get<1>(curnode) = NULL;
-            if (std::get<0>(return_value.first)) {
+            //delete std::get<1>(curnode);
+            //std::get<1>(curnode) = NULL;
+            //if (std::get<0>(return_value.first)) {
+                /*
                 #pragma omp critical
                 {
                     nodes->push_back(return_value.first);
-                    nodes->push_back(return_value.second);
+                    //nodes->push_back(return_value.second);
                 }
-            }
+                */
+                //#pragma omp task
+                //process_node(return_value.first);
+            //}
+            //curnode = return_value.second;
         }
+        return true;
     }
 
     size_t Node::add(intvec_t *iv, size_t begin, size_t end, prefix_t prefix, bool sorted, bool debug) {
-        std::vector<nodestate_t> nodes;
-        nodes.push_back(std::make_tuple(this, iv, prefix));
-        size_t i=0;
-        #pragma omp parallel shared(i, nodes)
-        #pragma omp single nowait
+        //std::vector<nodestate_t> nodes;
+        //nodes.push_back(std::make_tuple(this, iv, prefix, 0));
+        //size_t i=0;
+        nodestate_t start = std::make_tuple(this, iv, prefix, 0);
+        //#pragma omp parallel
+        //#pragma omp single nowait
+        #pragma omp task
+        process_node(start);
+        /*
         {
             while (true) {
                 nodestate_t curnode = nodes[i];
-                #pragma omp task shared(nodes)
-                process_node(&nodes, curnode);
+                size_t dependi = std::get<3>(curnode);
+                //#pragma omp task depend(in:done[dependi]) depend(out:done[i])
+                #pragma omp task
+                {
+                    process_node(&nodes, curnode);
+                    //done[i] = true;
+                }
                 ++i;
+                #pragma omp taskwait
+                break;
                 if (i == nodes.size()) {
                     //If the end has been reached, wait to make sure all pushes have been done
                     #pragma omp taskwait
@@ -509,6 +549,7 @@ namespace WaveletTrie {
                 }
             }
         }
+        */
         return 0;
     }
 
@@ -822,7 +863,6 @@ namespace WaveletTrie {
         if (debug)
             std::cout << "Fixing internal node\n";
         
-        //std::cout << this->alpha << "\t" << other->alpha << "\n";
         intvec_t alphas;
         alphas.push_back(this->alpha);
         alphas.push_back(other->alpha);
@@ -857,11 +897,6 @@ namespace WaveletTrie {
         bv_t bv(this->beta.size()+other->beta.size());
         copy_bits(bv, this->beta);
         copy_bits(bv, other->beta, this->beta.size());
-        //size_t i=0,j=0;
-        //for (;i<this->beta.size();++i)
-        //    bv[i] = this->beta[i];
-        //for (;j<other->beta.size();++j)
-        //    bv[i+j] = other->beta[j];
         if (debug) {
             std::cout << bv << "\n";
             this->print(true);
@@ -899,6 +934,7 @@ namespace WaveletTrie {
         sdsl::util::init_support(this->rank0, &(this->beta));
     }
 
+    //TODO: rewrite without recursion
     Node* merge(std::vector<Node*>::iterator begin, std::vector<Node*>::iterator end) {
         if (end == begin)
             return NULL;
@@ -966,8 +1002,8 @@ namespace WaveletTrie {
             prefix = longest_prefix(iv->begin(), std::min(iv->begin()+batch, iv->end()), 0, osize, sorted, debug); 
             //std::cout << "Computing wavelet trie\n";
             tsize = iv->size();
-            //#pragma omp parallel
-            //#pragma omp single nowait
+            #pragma omp parallel
+            #pragma omp single nowait
             this->root->add(iv, 0, osize, prefix, sorted, debug); 
             //this->root->add(iv.begin(), std::min(iv.begin()+batch, iv.end()), 0, osize, prefix, sorted, debug); 
         }
@@ -996,6 +1032,8 @@ namespace WaveletTrie {
                 //other->add(iv.begin()+cursize, std::min(iv.begin()+cursize+batch, iv.end()), 0, osize, sorted, debug); 
                 //std::cout << "Computing wavelet trie\n";
                 prefix = longest_prefix(iv->begin()+cursize, std::min(iv->begin()+cursize+batch, iv->end()), 0, osize, sorted, debug); 
+                #pragma omp parallel
+                #pragma omp single nowait
                 others[cursize/batch-1]->add(iv, 0, osize, prefix, sorted, debug); 
                 //others[cursize/batch-1]->add(iv.begin()+cursize, std::min(iv.begin()+cursize+batch, iv.end()), 0, osize, prefix, sorted, debug); 
             }
