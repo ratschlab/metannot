@@ -15,7 +15,7 @@
 #include<algorithm>
 #include<parallel/algorithm>
 #include "array_int.hpp"
-#define MAXNUM (std::numeric_limits<std::size_t>::max())
+#define MAXNUM (std::numeric_limits<std::uint16_t>::max())
 #define TASKMIN 100
 
 #include <boost/multiprecision/cpp_int.hpp>
@@ -92,48 +92,6 @@ namespace WaveletTrie {
 //        }
     }
 
-    //end is the max iteration
-    prefix_trans_t longest_prefix_transpose(size_t ivb, size_t ive, intvec_t::iterator begin, intvec_t::iterator end, bool sorted=false, bool debug=false) {
-        bool allequal=true;
-        intvec_t::iterator done=end;
-        alpha_t prefix=1lu,temp;
-        intvec_t newcols;
-        if (ive > ivb) {
-            auto it=begin;
-            prefix=0lu;
-            while (it != end) {
-                //std::cout << it-begin << "\t" << end-begin << "\n";
-                temp = array_int::toint((*it) >> ivb);
-                clear_after(temp, ive-ivb);
-                //temp &= (alpha_t(1) << (ive-ivb))-1;
-                newcols.push_back(temp);
-                if (debug)
-                    std::cout << temp;
-                if (done==end && temp != 0lu) {
-                    if ((temp & (temp+1lu)) == 0lu && (ive-ivb == 1lu || temp > 1lu)) {
-                        //all ones
-                        bit_set(prefix, (size_t)(it-begin));
-                    } else {
-                        //end of common prefix
-                        allequal = false;
-                        if (debug)
-                            std::cout << "<\n";
-                        done = it;
-                        //break;
-                    }
-                }
-                if (debug)
-                    std::cout << "\n";
-                ++it;
-            }
-            //boost::multiprecision::bit_set(prefix, (size_t)(it-begin));
-            bit_set(prefix, (size_t)(done-begin));
-        }
-        if (debug)
-            std::cout << "\n";
-        return std::make_tuple(prefix, allequal, newcols);
-    }
-
     prefix_t longest_prefix(intvec_t::iterator ivb, intvec_t::iterator ive, size_t begin=0, size_t end=MAXNUM, bool sorted=false, bool debug=false) {
         std::pair<alpha_t, size_t> prefix(1,0);
         bool allequal=true;
@@ -182,7 +140,6 @@ namespace WaveletTrie {
             void serialize(std::ofstream &os, std::ofstream &oas);
             size_t add(intvec_t::iterator ivb, intvec_t::iterator ive, size_t begin, size_t end, prefix_t prefix, bool sorted=false, bool debug=false);
             size_t add(intvec_t *iv, size_t begin, size_t end, prefix_t prefix, bool sorted=false, bool debug=false);
-            size_t add(size_t ivb, size_t ive, intvec_t::iterator begin, intvec_t::iterator end, bool sorted=false, bool debug=false);
             int move_label_down(size_t ol, size_t add=0);
             void append(Node *other, bool leftorright=false, size_t addme=0, size_t addother=0, bool debug=false);
             void print(std::ostream &os, bool recursive=false);
@@ -296,9 +253,6 @@ namespace WaveletTrie {
             Node *root=NULL;
             WTR();
             WTR(intvec_t *iv, bool transpose, size_t osize, size_t batch, bool sorted=false, bool debug=false);
-            //WTR(intvec_t &iv, size_t begin, size_t end, size_t transpose, bool sorted=false, bool debug=false);
-            //WTR(intvec_t &iv, intvec_t &tiv, size_t begin=0, size_t end=MAXNUM, bool sorted=false, bool debug=false);
-            //WTR(intvec_t &cols, size_t row, size_t nrows, bool sorted=false, bool debug=false);
             ~WTR();
             annot_t at(size_t i);
             void serialize(std::ofstream &os);
@@ -429,11 +383,11 @@ namespace WaveletTrie {
                     std::get<0>(curnode)->child[1] = new Node();
                     bv_t bv(std::get<1>(curnode)->size());
                     annot_t prefices[2];
-                    bit_set(prefices[0], MAXNUM-1);
-                    bit_set(prefices[1], MAXNUM-1);
+                    bit_set(prefices[0], MAXNUM);
+                    bit_set(prefices[1], MAXNUM);
                     prefix_t cprefix[2] = {std::make_pair(0, true), std::make_pair(0, true)};
                     bool set[2] = {false, false};
-                    size_t lengths[2] = {MAXNUM-1, MAXNUM-1};
+                    size_t lengths[2] = {MAXNUM, MAXNUM};
                     for (size_t i=0;i<bv.size();++i) {
                         bv[i] = array_int::bit_test(std::get<1>(curnode)->operator[](i), length);
                         children[bv[i]]->push_back(std::get<1>(curnode)->operator[](i) >> (length+1));
@@ -449,7 +403,7 @@ namespace WaveletTrie {
                     }
                     for (size_t i=0;i<2;++i) {
                         std::get<0>(cprefix[i]) = array_int::toint(prefices[i]);
-                        if (lengths[i] == MAXNUM-1) {
+                        if (lengths[i] == MAXNUM) {
                             lengths[i] = (std::get<0>(cprefix[i]) != 0) ? msb((alpha_t)std::get<0>(cprefix[i]))+1 : 0;
                         } else {
                             std::get<1>(cprefix[i]) = false;
@@ -475,26 +429,17 @@ namespace WaveletTrie {
                         process_node(rightnode);
                         curnode = leftnode;
                     }
-                    //return_value = std::make_pair(\
-                    //        std::make_tuple(std::get<0>(curnode)->child[0], children[0], cprefix[0], std::get<3>(curnode)), \
-                    //        std::make_tuple(std::get<0>(curnode)->child[1], children[1], cprefix[1], std::get<3>(curnode)));
                 } else {
                     std::get<0>(curnode)->breakleaf(std::get<1>(curnode)->size());
                     delete std::get<1>(curnode);
                     std::get<1>(curnode) = NULL;
                     return true;
-                    //return_value = std::make_pair(\
-                    //        nodestate_t(NULL, NULL, prefix_t(), std::get<3>(curnode)), \
-                    //        nodestate_t(NULL, NULL, prefix_t(), std::get<3>(curnode)));
                 }
             } else {
                 std::get<0>(curnode)->breakleaf(std::get<1>(curnode)->size());
                 delete std::get<1>(curnode);
                 std::get<1>(curnode) = NULL;
                 return true;
-                //return_value = std::make_pair(\
-                //        nodestate_t(NULL, NULL, prefix_t(), std::get<3>(curnode)), \
-                //        nodestate_t(NULL, NULL, prefix_t(), std::get<3>(curnode)));
             }
             //delete std::get<1>(curnode);
             //std::get<1>(curnode) = NULL;
@@ -645,87 +590,6 @@ namespace WaveletTrie {
         }
         return 0lu;
     }
-
-    size_t Node::add(size_t ivb, size_t ive, intvec_t::iterator begin, intvec_t::iterator end, bool sorted, bool debug) {
-        if (ive > ivb && end > begin) {
-            prefix_trans_t prefix = longest_prefix_transpose(ivb, ive, begin, end, sorted, debug);
-            //ive = std::get<2>(prefix);
-            this->alpha = std::get<0>(prefix);
-            if (!std::get<1>(prefix)) {
-                intvec_t* tchildren[2] = {new intvec_t(end-begin), new intvec_t(end-begin)};
-                size_t prefix_length = msb(this->alpha);
-                //assert(prefix_length < end-begin);
-                if (debug) {
-                    assert(this->child[0] == NULL);
-                    assert(this->child[1] == NULL);
-                }
-                this->child[0] = new Node();
-                this->child[1] = new Node();
-
-                //copy over beta
-                //alpha_t cbv = (*(begin+prefix_length) >> ivb) & ((alpha_t(1) << (ive-ivb))-1);
-                alpha_t cbv = array_int::toint(*(begin+prefix_length) >> ivb);
-                clear_after(cbv, ive-ivb);
-                //sanity check
-                if (cbv == 0) {
-                    std::cout << "Bad prefix\t" << ivb << "\t" << ive << "\n";
-                    for (auto k=begin; k!= end;++k) {
-                        std::cout << (((*k) >> ivb) & ((alpha_t(1) << (ive-ivb)-1)));
-                        if (k == begin+prefix_length)
-                            std::cout << "<";
-                        std::cout << "\n";
-                    }
-                    assert(false);
-                }
-                bv_t bv = copy_bits(cbv, ive-ivb);
-                //TODO: std::get<2>(prefix) has the new cols
-                size_t tsizes[2]={0,0};
-                size_t maxsize[2]={0,0};
-                for (size_t i=0;i<bv.size();++i) {
-                    for (auto j=begin+prefix_length+1;j!=end;++j) {
-                        if (array_int::bit_test(*j, ivb+i)) {
-                            maxsize[bv[i]] = std::max(maxsize[bv[i]], (size_t)(j-(begin+prefix_length+1)));
-                            bit_set(tchildren[bv[i]]->operator[](j-(begin+prefix_length+1)), tsizes[bv[i]]);
-                        }
-                    }
-                    tsizes[bv[i]]++;
-                }
-                assert(tsizes[0] + tsizes[1] == bv.size());
-                assert(tsizes[0] < bv.size());
-                tchildren[0]->resize(maxsize[0]+1);
-                tchildren[1]->resize(maxsize[1]+1);
-                beta_t beta(bv);
-                this->beta = beta;
-                sdsl::util::init_support(this->rank1, &(this->beta));
-                sdsl::util::init_support(this->rank0, &(this->beta));
-                #pragma omp task if (tsizes[0] > TASKMIN)
-                this->child[0]->add(0, tsizes[0], tchildren[0]->begin(), tchildren[0]->end(), sorted, debug);
-                #pragma omp taskwait
-                delete tchildren[0];
-                #pragma omp task if (tsizes[1] > TASKMIN)
-                this->child[1]->add(0, tsizes[1], tchildren[1]->begin(), tchildren[1]->end(), sorted, debug);
-                #pragma omp taskwait
-                delete tchildren[1];
-                #pragma omp taskwait
-                {
-                    for (size_t i=0;i<2;++i) {
-                        assert(this->child[i] != NULL);
-                        if (this->child[i]->alpha == 0) {
-                            delete this->child[i];
-                            this->child[i] = NULL;
-                        }
-                    }
-                }
-            } else {
-                this->breakleaf(ive-ivb);
-                //this->breakleaf(std::get<2>(prefix));
-            }
-            //return std::get<2>(prefix);
-            return ive-ivb;
-        }
-        return 0;
-    }
-
 
     int Node::move_label_down(size_t ol, size_t add) {
         size_t len = msb(this->alpha);
@@ -988,17 +852,9 @@ namespace WaveletTrie {
             debug=true;
         this->root = new Node();
         if (batch != 0 && iv->size() != 0) {
-        size_t tsize=0;
-        prefix_t prefix;
-        //std::cout << "Computing alpha\n";
-        if (transpose) {
-            //prefix = longest_prefix_transpose(0, std::min(batch, osize), iv.begin(), iv.end(), sorted, debug);
-            //std::cout << "Computing wavelet trie\n";
-            tsize = osize;
-            #pragma omp parallel
-            #pragma omp single nowait
-            this->root->add(0, std::min(batch, osize), iv->begin(), iv->end(), sorted, debug);
-        } else {
+            size_t tsize=0;
+            prefix_t prefix;
+            //std::cout << "Computing alpha\n";
             prefix = longest_prefix(iv->begin(), std::min(iv->begin()+batch, iv->end()), 0, osize, sorted, debug); 
             //std::cout << "Computing wavelet trie\n";
             tsize = iv->size();
@@ -1006,27 +862,18 @@ namespace WaveletTrie {
             #pragma omp single nowait
             this->root->add(iv, 0, osize, prefix, sorted, debug); 
             //this->root->add(iv.begin(), std::min(iv.begin()+batch, iv.end()), 0, osize, prefix, sorted, debug); 
-        }
-        if (debug) {
-            this->print();
-            std::cout << "-------------\n\n";
-        }
-        this->size = tsize;
-        //Node *other;
-        std::vector<Node*> others(tsize/batch,NULL);
-        #pragma omp parallel for shared(others)
-        for (size_t cursize = batch; cursize < tsize; cursize += batch) {
-            //other = new Node();
-            others[cursize/batch-1] = new Node();
-            //std::cout << "Computing alpha\n";
-            if (transpose) {
-                //#pragma omp parallel
-                //#pragma omp single nowait
-                //other->add(cursize, std::min(cursize+batch, osize), iv.begin(), iv.end(), sorted, debug);
-                //std::cout << "Computing wavelet trie\n";
-                //prefix = longest_prefix_transpose(cursize, std::min(cursize+batch, osize), iv.begin(), iv.end(), sorted, debug);
-                others[cursize/batch-1]->add(cursize, std::min(cursize+batch, osize), iv->begin(), iv->end(), sorted, debug);
-            } else {
+            if (debug) {
+                this->print();
+                std::cout << "-------------\n\n";
+            }
+            this->size = tsize;
+            //Node *other;
+            std::vector<Node*> others(tsize/batch,NULL);
+            #pragma omp parallel for shared(others)
+            for (size_t cursize = batch; cursize < tsize; cursize += batch) {
+                //other = new Node();
+                others[cursize/batch-1] = new Node();
+                //std::cout << "Computing alpha\n";
                 //#pragma omp parallel
                 //#pragma omp single nowait
                 //other->add(iv.begin()+cursize, std::min(iv.begin()+cursize+batch, iv.end()), 0, osize, sorted, debug); 
@@ -1036,31 +883,22 @@ namespace WaveletTrie {
                 #pragma omp single nowait
                 others[cursize/batch-1]->add(iv, 0, osize, prefix, sorted, debug); 
                 //others[cursize/batch-1]->add(iv.begin()+cursize, std::min(iv.begin()+cursize+batch, iv.end()), 0, osize, prefix, sorted, debug); 
+                if ((cursize/batch-1) % 100 == 0)
+                    std::cout << "\n";
+                std::cout << "." << std::flush;
+                
             }
-            if ((cursize/batch-1) % 100 == 0)
-                std::cout << "\n";
-            std::cout << "." << std::flush;
-            
-        }
-        if (others.size() && others[0]) {
-            std::cout << "\nMerging\n";
-            Node *a;
-            #pragma omp parallel
-            #pragma omp single nowait
-            a = merge(others.begin(), others.end());
-            #pragma omp parallel
-            #pragma omp single nowait
-            this->root->append(a, false);
-            delete a;
-        }
-        /*
-        for (size_t i=0;i<others.size();++i) {
-            #pragma omp parallel
-            #pragma omp single nowait
-            this->root->append(others[i], false);
-            delete others[i];
-        }
-        */
+            if (others.size() && others[0]) {
+                std::cout << "\nMerging\n";
+                Node *a;
+                #pragma omp parallel
+                #pragma omp single nowait
+                a = merge(others.begin(), others.end());
+                #pragma omp parallel
+                #pragma omp single nowait
+                this->root->append(a, false);
+                delete a;
+            }
         }
     }
 
@@ -1092,7 +930,6 @@ namespace WaveletTrie {
             }
             assert(curnode != NULL);
             annot |= curnode->alpha << len;
-            //annot += curnode->alpha << len;
             bit_unset(annot, msb(annot));
         }
         return annot;
@@ -1171,121 +1008,6 @@ namespace WaveletTrie {
         return a.indices.size();
     }
 
-    bool midless(const cpp_int &a, const cpp_int &b, const size_t maxsize) {
-        //all zeros
-        if (a==0 || b==0)
-            return a<b;
-        //all ones
-        if ((a & (a+1)) == 0)
-            return 1;
-        if ((b & (b+1)) == 0)
-            return 0;
-        size_t apc = popcount(a);
-        size_t bpc = popcount(b);
-        //if a tie, but the one with the largest indices first
-        if (abs(maxsize/2-apc) == abs(maxsize/2-bpc)) {
-            return lsb(a) > lsb(b);
-            //return lownum;
-        }
-        return abs(maxsize/2-apc) < abs(maxsize/2-bpc);
-    }
-
-    bool midless(const array_int::array_int &a, const array_int::array_int &b, const size_t maxsize) {
-        if (a.indices.size() == 0 || b.indices.size() == 0) {
-            return a.indices.size() < b.indices.size();
-        }
-        //TODO
-        //check for all ones
-        if (abs(maxsize/2-a.indices.size()) == abs(maxsize/2-b.indices.size())) {
-            return *a.indices.begin() > *b.indices.begin();
-        }
-        return abs(maxsize/2-a.indices.size()) < abs(maxsize/2-b.indices.size());
-    }
-
-    bool intlex(const annot_t &a, const annot_t &b) {
-        if (a==b)
-            return 0;
-        size_t clsb = lsb(a ^ b);
-        return array_int::bit_test(a, clsb) == 0;
-    }
-
-    std::pair<intvec_t*, intvec_t*> construct_transpose(std::ifstream &pfile, size_t begin=0, size_t end=MAXNUM, bool sort=false, bool debug=false) {
-        //std::map<size_t, annot_t> iv;
-        intvec_t *iv = new intvec_t();
-        std::string line, ed;
-        //std::vector<size_t> edi;
-        size_t edi=0;
-        size_t maxsize=0;
-        for (maxsize=0;pfile >> line;++maxsize) {
-            std::istringstream sfile(line);
-            //edi.clear();
-            while (std::getline(sfile, ed, ',')) {
-                //edi.push_back(atol(ed.c_str()));
-                edi = atol(ed.c_str());
-                if (edi) {
-                    if (edi >= iv->size()) {
-                        iv->resize(edi+1);
-                    }
-                    bit_set(iv->at(edi), maxsize);
-                    assert(array_int::bit_test(iv->operator[](edi), maxsize));
-                }
-                //if (edi.back() < begin || edi.back() >= end)
-                //    break;
-            }
-            /*
-            for (auto it=edi.begin(); it!=edi.end();it++) {
-                if (*it) {
-                    if (*it >= iv.size())
-                        iv.resize(*it+1);
-                    boost::multiprecision::bit_set(iv.at(*it), maxsize);
-                    assert(boost::multiprecision::bit_test(iv[*it], maxsize));
-                }
-            }
-            */
-        }
-        //for (size_t i=0;i<iv.size();++i)
-        //    std::cout << i << "\t" << iv[i] << "\t" << (iv[i] & (iv[i]+1)) << "\n";
-        std::cout << "Rearranging columns\n";
-        __gnu_parallel::sort(iv->begin(), iv->end(), std::bind(static_cast<bool(*)(const annot_t&,const annot_t&,const size_t)>(&midless), std::placeholders::_1, std::placeholders::_2, maxsize));
-        //for (size_t i=0;i<iv.size();++i)
-        //    std::cout << i << "\t" << iv[i] << "\t" << (iv[i] & (iv[i]+1)) << "\n";
-        std::cout << "Constructing rows\n";
-        annot_t cannot;
-        intvec_t *iv_order = new intvec_t();
-        for (size_t i=0;i<maxsize;++i) {
-            //TODO: replace this with copy_bits
-            cannot=0;
-            for (size_t j=0;j<iv->size();++j) {
-                if (array_int::bit_test(iv->operator[](j), i)) {
-                    bit_set(cannot, j);
-                }
-            }
-            /*
-            for (auto j = iv.begin();j!=iv.end();++j) {
-                if (boost::multiprecision::bit_test(j->second, i)) {
-                    boost::multiprecision::bit_set(cannot, j->first);
-                }
-            }
-            */
-            iv_order->push_back(cannot);
-        }
-        if (sort) {
-            std::cout << "Sorting rows\n";
-            __gnu_parallel::sort(iv_order->begin(), iv_order->end(), intlex);
-        }
-        //sanity check
-        /*
-        prefix_t prefix1 = longest_prefix(iv_order);
-        prefix_t prefix2 = longest_prefix_transpose(iv, iv_order.size());
-        if (std::get<0>(prefix1) != std::get<0>(prefix2) || std::get<1>(prefix1) != std::get<1>(prefix2)) {
-            std::cout << iv_order.size() << "\t" << iv.size() << "\n";
-            std::cerr << std::get<0>(prefix1) << "\t" << std::get<1>(prefix1) << "\n";
-            std::cerr << std::get<0>(prefix2) << "\t" << std::get<1>(prefix2) << "\n";
-            assert(false);
-        }
-        */
-        return std::make_pair(iv_order, iv);
-    }
     void Node::print(std::ostream &os, bool recursive) {
         os << this->alpha << ";" << this->beta << "\t";
         if (this->child[0] != NULL)
