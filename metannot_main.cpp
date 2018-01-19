@@ -28,7 +28,6 @@ int main(int argc, char** argv) {
     WaveletTrie::intvec_t riv;
     for (int i=4;i<argc-1;++i) {
         std::ifstream pfile(argv[i]);
-        bool debug=(std::getenv("DEBUG") != NULL);
         std::pair<WaveletTrie::intvec_t*, WaveletTrie::intvec_t*> iv;
         if (pfile.good()) {
             std::cout << "Reading\n";
@@ -38,7 +37,7 @@ int main(int argc, char** argv) {
             std::cout << "\n";
             while (!pfile.eof()) {
                 for (size_t i=0;!pfile.eof() && (batch>0 ? i<batch : true);i+=cbatch) {
-                    ivs.push_back(new std::pair<WaveletTrie::intvec_t*, WaveletTrie::intvec_t*>(WaveletTrie::construct(pfile, cbatch, MAXNUM, debug)));
+                    ivs.push_back(new std::pair<WaveletTrie::intvec_t*, WaveletTrie::intvec_t*>(WaveletTrie::construct(pfile, cbatch, MAXNUM)));
                     if (reconst) {
                         riv.insert(riv.end(), ivs.back()->first->begin(), ivs.back()->first->end());
                     }
@@ -50,7 +49,7 @@ int main(int argc, char** argv) {
                 {
                     #pragma omp taskloop
                     for (size_t i=0;i<ivs.size();++i) {
-                        wtrs[k+i] = new WaveletTrie::WTR(ivs[i]->first, 0, ivs[i]->second->size(), ivs[i]->first->size());
+                        wtrs[k+i] = new WaveletTrie::WTR(ivs[i]->first, ivs[i]->second->size(), ivs[i]->first->size());
                         delete ivs[i]->second;
                         delete ivs[i];
                         std::cout << "." << std::flush;
@@ -77,13 +76,13 @@ int main(int argc, char** argv) {
         WaveletTrie::WTR* wtr;
         #pragma omp parallel
         #pragma omp single nowait
-        wtr = new WaveletTrie::WTR(WaveletTrie::merge(wtrs.begin(), wtrs.end()));
+        wtr = new WaveletTrie::WTR(WaveletTrie::WTR::merge(wtrs.begin(), wtrs.end()));
         delete wtrs[0];
         wtrs[0] = wtr;
-        if (reconst) {
-            assert(wtrs[0]->reconstruct(riv));
-            std::cout << "Passed merged test\n";
-        }
+    }
+    if (reconst) {
+        assert(wtrs[0]->reconstruct(riv));
+        std::cout << "Passed merged test\n";
     }
     std::ofstream ofile(argv[argc-1]);
     if (ofile.good()) {
