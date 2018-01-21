@@ -470,17 +470,11 @@ namespace WaveletTrie {
     }
 
     struct BitComp {
-        const intvec_t::iterator& suffix_v;
-        const mpz_t& bit_v;
-        BitComp(const intvec_t::iterator &suff_v, const mpz_t &val_vec):
-            suffix_v(suff_v), bit_v(val_vec) { }
         bool operator()(const cpp_int &a, const cpp_int &b) {
-            return mpz_tstbit(bit_v, &a-&(*suffix_v)) < mpz_tstbit(bit_v, &b-&(*suffix_v));
+            return mpz_tstbit(a.backend().data(), 0) < mpz_tstbit(b.backend().data(), 0);
         }
     };
 
-    //TODO: instead of assigning vectors, just sort
-    //put a stable sort here
     bv_t distribute_(nodestate_t &curnode, intvec_t** children, annot_t* prefices, bool* set, size_t* lengths) {
         size_t length = mpz_sizeinbase(std::get<0>(curnode)->alpha.backend().data(), 2) - 1;
         bool curbit;
@@ -489,6 +483,8 @@ namespace WaveletTrie {
         auto begin = std::get<1>(curnode)->begin();
         auto it = begin;
         size_t z_count = 0;
+        //mpz_t temp;
+        //mpz_init(temp);
         for (; it != std::get<1>(curnode)->end(); ++it) {
             mpz_t& old = it->backend().data();
             curbit = mpz_tstbit(old, length);
@@ -500,17 +496,16 @@ namespace WaveletTrie {
             }
             //remove prefix
             //mpz_tdiv_q_2exp(temp, old, length + 1); // temp = old >> (length + 1)
-            mpz_tdiv_q_2exp(old, old, length + 1); // temp = old >> (length + 1)
-            children[curbit]->emplace_back(old);
+            mpz_tdiv_q_2exp(old, old, length); // temp = old >> (length + 1)
+            //children[curbit]->emplace_back(old);
             if (lengths[curbit] > 0) {
                 update_pref_(pref, old, set[curbit], prefices[curbit], lengths[curbit]);
             }
-            //*it = temp;
         }
-        //std::stable_sort(begin, it, BitComp(std::get<1>(curnode)->begin(), bv_mpz));
         bv_t bv = copy_bits(bv_mpz, std::get<1>(curnode)->size());
         mpz_clear(bv_mpz);
-        /*
+        //mpz_clear(temp);
+        std::stable_sort(std::get<1>(curnode)->begin(), std::get<1>(curnode)->end(), BitComp());
         if (z_count > 0 && z_count < std::get<1>(curnode)->size()) {
             children[0]->insert(
                     children[0]->end(), 
@@ -523,7 +518,6 @@ namespace WaveletTrie {
                     std::make_move_iterator(std::get<1>(curnode)->end())
             );
         }
-        */
         return bv;
     }
 
@@ -606,7 +600,8 @@ namespace WaveletTrie {
             return 1;
         Node *temp_node = new Node();
         mpz_t& temp = temp_node->alpha.backend().data();
-        mpz_tdiv_q_2exp(temp, this->alpha.backend().data(), ol + 1);
+        mpz_tdiv_q_2exp(temp, this->alpha.backend().data(), ol); //this makes sure that the first bit in an internal node indicates its parent
+        //mpz_tdiv_q_2exp(temp, this->alpha.backend().data(), ol + 1);
         //temp_node->alpha = this->alpha >> (ol+1);
         temp_node->beta = this->beta;
         temp_node->child[0] = this->child[0];
@@ -944,16 +939,18 @@ namespace WaveletTrie {
                 //annot |= curnode->alpha << len;
                 //annot += curnode->alpha << len;
                 //len += msb(curnode->alpha);
-                len += mpz_sizeinbase(cur, 2);
+                len += mpz_sizeinbase(cur, 2) - 1;
                 curbit = curnode->beta[i];
                 if (curbit) {
                     curnode->rank1.set_vector(&(curnode->beta));
                     i = curnode->rank1(i);
                 } else {
-                    bit_unset(annot, len - 1);
+                    //bit_unset(annot, len - 1);
                     curnode->rank0.set_vector(&(curnode->beta));
                     i = curnode->rank0(i);
                 }
+                mpz_clrbit(annot_a, len);
+                //bit_unset(annot, len);
                 curnode = curnode->child[curbit];
                 if (curnode == NULL) {
                     std::cerr << "Missing node\n";
