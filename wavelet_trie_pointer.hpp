@@ -69,7 +69,7 @@ namespace WaveletTrie {
     }
     */
 
-    void clear_after(cpp_int &a, size_t i) {
+    inline void clear_after(cpp_int &a, size_t i) {
         mpz_t& cur = a.backend().data();
         mpz_tdiv_r_2exp(cur, cur, i);
 
@@ -163,9 +163,16 @@ namespace WaveletTrie {
         bv.resize(length == 0 ? msb(cbv)+1 : length);
         */
         const mpz_t& data = cbv.backend().data();
-        size_t size_bytes = (mpz_sizeinbase (data, 2) + CHAR_BIT-1) / CHAR_BIT;
-        bv_t bv(size_bytes * 8);
-        mpz_export(bv.data(), &size_bytes, 1, 1, 0, 0, data);
+        size_t msb = mpz_sizeinbase(data, 2);
+        size_t size;
+        if (length > 0 && length < msb) {
+            size = length;
+        } else {
+            size = std::max(msb, length);
+        }
+        bv_t bv(size);
+        size_t size_64 = bv.capacity() >> 6;
+        mpz_export(bv.data(), &size_64, -1, 8, 0, 0, data);
         return bv;
     }
 
@@ -390,35 +397,134 @@ namespace WaveletTrie {
 
     }
 
-    //TODO: instead of assigning vectors, just sort
-    //put a stable sort here
-    void distribute_(nodestate_t &curnode, intvec_t** children, bv_t &bv, annot_t* prefices, bool* set, size_t* lengths, size_t &length) {
+    void xor_early_cut(mpz_t &temp2, const mpz_t &temp, const mpz_t &pref) {
+        //reference for full length
+        mpz_xor(temp2, temp, pref);
+        /*
+
+        size_t size[2] = {
+            mpz_size(temp),
+            mpz_size(pref)
+        };
+        size_t sizemin;
+        bool sel; //true iff size(temp) < size(pref)
+        //reserve larger space
+        if (size[0] < size[1]) {
+            mpz_set(temp2, pref);
+            sizemin = size[0];
+            sel = true;
+        } else {
+            mpz_set(temp2, temp);
+            sizemin = size[1];
+            sel = false;
+        }
+        size_t newsize = mpz_size(temp2);
         size_t i = 0;
-        bool curbit;
-        mpz_t temp, temp2;
-        for (auto it = bv.begin(); it != bv.end(); ++it) {
-            mpz_t& old = std::get<1>(curnode)->operator[](i).backend().data();
-            curbit = mpz_tstbit(old, length);
-            mpz_t& pref = prefices[curbit].backend().data();
-            *it = curbit;
-            mpz_init(temp);
-            mpz_tdiv_q_2exp(temp, old, length + 1);
-            children[curbit]->emplace_back(temp);
-            if (children[curbit]->back() != prefices[curbit]) {
-                if (!set[curbit]) {
-                    prefices[curbit] = children[curbit]->back();
-                    set[curbit]=true;
-                } else {
-                    mpz_init(temp2);
-                    mpz_xor(temp2, temp, pref);
-                    lengths[curbit] = std::min(lengths[curbit], mpz_scan1(temp2, 0));
-                    mpz_clear(temp2);
-                    clear_after(prefices[curbit], lengths[curbit]);
+        const mp_limb_t* ptrs[2] = {
+            mpz_limbs_read(temp),
+            mpz_limbs_read(pref)
+        };
+        mp_limb_t *nptr = mpz_limbs_modify(temp2, 0);
+        for (; i < sizemin; ++i) {
+            //mp_limb_t *nptr = mpz_limbs_modify(temp2, i);
+            mpn_xor_n(nptr, ptrs[0], ptrs[1], 1);
+            ptrs[0] += sizeof(*(ptrs[0]));
+            ptrs[1] += sizeof(*(ptrs[1]));
+            if (!mpn_zero_p(nptr, 1)) {
+                break;
+            }
+            nptr += sizeof(*(nptr));
+        }
+        //only run if reached the end and there's more stuff
+        if (i == sizemin) {
+            for (; i < newsize && !mpn_popcount(ptrs[sel], 1); ++i) {
+                mpn_copyi(nptr,ptrs[sel], 1);
+                if (!mpn_zero_p(ptrs[sel], 1)) {
+                    //when first non-zero limb found
+                    break;
+                }
+                nptr += sizeof(*(nptr));
+                ptrs[sel] += sizeof(*(ptrs[sel]));
+            }
+        }
+        */
+    }
+
+    inline void update_pref_(mpz_t &pref, mpz_t &temp, bool &set, annot_t &prefix, size_t &length) {
+        if (mpz_cmp(temp, pref) != 0) {
+            if (!set) {
+                prefix = temp;
+                set=true;
+            } else {
+                mpz_t temp2;
+                mpz_init(temp2);
+                mpz_xor(temp2, temp, pref);
+                size_t newlength = mpz_scan1(temp2, 0);
+                mpz_clear(temp2);
+                if (newlength < length) {
+                    length = newlength;
+                    clear_after(prefix, newlength);
                 }
             }
-            mpz_clear(temp);
-            ++i;
         }
+    }
+
+    struct BitComp {
+        const intvec_t::iterator& suffix_v;
+        const mpz_t& bit_v;
+        BitComp(const intvec_t::iterator &suff_v, const mpz_t &val_vec):
+            suffix_v(suff_v), bit_v(val_vec) { }
+        bool operator()(const cpp_int &a, const cpp_int &b) {
+            return mpz_tstbit(bit_v, &a-&(*suffix_v)) < mpz_tstbit(bit_v, &b-&(*suffix_v));
+        }
+    };
+
+    //TODO: instead of assigning vectors, just sort
+    //put a stable sort here
+    bv_t distribute_(nodestate_t &curnode, intvec_t** children, annot_t* prefices, bool* set, size_t* lengths) {
+        size_t length = mpz_sizeinbase(std::get<0>(curnode)->alpha.backend().data(), 2) - 1;
+        bool curbit;
+        mpz_t bv_mpz;
+        mpz_init(bv_mpz);
+        auto begin = std::get<1>(curnode)->begin();
+        auto it = begin;
+        size_t z_count = 0;
+        for (; it != std::get<1>(curnode)->end(); ++it) {
+            mpz_t& old = it->backend().data();
+            curbit = mpz_tstbit(old, length);
+            mpz_t& pref = prefices[curbit].backend().data();
+            if (curbit) {
+                mpz_setbit(bv_mpz, it - begin);
+            } else {
+                z_count++;
+            }
+            //remove prefix
+            //mpz_tdiv_q_2exp(temp, old, length + 1); // temp = old >> (length + 1)
+            mpz_tdiv_q_2exp(old, old, length + 1); // temp = old >> (length + 1)
+            children[curbit]->emplace_back(old);
+            if (lengths[curbit] > 0) {
+                update_pref_(pref, old, set[curbit], prefices[curbit], lengths[curbit]);
+            }
+            //*it = temp;
+        }
+        //std::stable_sort(begin, it, BitComp(std::get<1>(curnode)->begin(), bv_mpz));
+        bv_t bv = copy_bits(bv_mpz, std::get<1>(curnode)->size());
+        mpz_clear(bv_mpz);
+        /*
+        if (z_count > 0 && z_count < std::get<1>(curnode)->size()) {
+            children[0]->insert(
+                    children[0]->end(), 
+                    std::make_move_iterator(std::get<1>(curnode)->begin()),
+                    std::make_move_iterator(std::get<1>(curnode)->begin() + z_count)
+            );
+            children[1]->insert(
+                    children[1]->end(), 
+                    std::make_move_iterator(std::get<1>(curnode)->begin() + z_count),
+                    std::make_move_iterator(std::get<1>(curnode)->end())
+            );
+        }
+        */
+        return bv;
     }
 
 
@@ -426,20 +532,17 @@ namespace WaveletTrie {
         while (std::get<1>(curnode)) {
             if (std::get<1>(curnode)->size()) {
                 std::get<0>(curnode)->alpha = std::get<0>(std::get<2>(curnode));
-                size_t length = mpz_sizeinbase(std::get<0>(curnode)->alpha.backend().data(), 2) - 1;
-                //size_t length = msb(std::get<0>(curnode)->alpha);
                 if (!std::get<1>(std::get<2>(curnode))) {
                     intvec_t* children[2] = {new intvec_t(), new intvec_t()};
                     std::get<0>(curnode)->child[0] = new Node();
                     std::get<0>(curnode)->child[1] = new Node();
-                    bv_t bv(std::get<1>(curnode)->size());
                     annot_t prefices[2];
                     bit_set(prefices[0], MAXNUM);
                     bit_set(prefices[1], MAXNUM);
                     prefix_t cprefix[2] = {prefix_t(0, true), prefix_t(0, true)};
                     bool set[2] = {false, false};
                     size_t lengths[2] = {MAXNUM, MAXNUM};
-                    distribute_(curnode, children, bv, prefices, set, lengths, length);
+                    std::get<0>(curnode)->set_beta(beta_t(distribute_(curnode, children, prefices, set, lengths)));
                     for (size_t i=0;i<2;++i) {
                         std::get<0>(cprefix[i]) = prefices[i];
                         if (lengths[i] == MAXNUM) {
@@ -450,7 +553,6 @@ namespace WaveletTrie {
                         //set the last bit to indicate the length of the prefix
                         bit_set(std::get<0>(cprefix[i]), lengths[i]);
                     }
-                    std::get<0>(curnode)->set_beta(beta_t(bv));
 #ifdef DBGDEBUG
                     assert(children[0]->size());
                     assert(children[1]->size());
@@ -458,6 +560,7 @@ namespace WaveletTrie {
                     delete std::get<1>(curnode);
                     nodestate_t leftnode = std::make_tuple(std::get<0>(curnode)->child[0], children[0], cprefix[0], std::get<3>(curnode));
                     nodestate_t rightnode = std::make_tuple(std::get<0>(curnode)->child[1], children[1], cprefix[1], std::get<3>(curnode));
+                    //put the side with the longer prefix in a new task
                     if (lengths[0] > lengths[1]) {
                         #pragma omp task if (children[0]->size() > TASKMIN)
                         process_node(leftnode);
