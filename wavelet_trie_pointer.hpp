@@ -233,7 +233,7 @@ namespace WaveletTrie {
     }
     */
 
-    uint64_t copy_bits_count(bv_t &target, beta_t &source, size_t start=0, size_t t_bs=beta_blocksize) {
+    uint64_t copy_bits_count(bv_t &target, beta_t &source, size_t start=0, size_t &t_bs=beta_blocksize) {
         assert(target.size() >= source.size() + start);
 
         size_t bs = sizeof(*source.data()) << 3;
@@ -420,41 +420,6 @@ namespace WaveletTrie {
         }
     }
 
-
-    prefix_t longest_prefix(intvec_t::iterator ivb, intvec_t::iterator ive, size_t begin=0, size_t end=MAXNUM) {
-        std::pair<alpha_t, size_t> prefix(1,0);
-        bool allequal=true;
-        intvec_t::iterator i = ivb;
-        mpz_t temp2;
-        if ((ive - ivb) > 0) {
-            //std::get<0>(prefix) = array_int::toint(*ivb);
-            std::get<0>(prefix) = *ivb;
-            std::get<1>(prefix) = MAXNUM;
-            for (++i;i != ive;++i) {
-                if (*i != std::get<0>(prefix)) {
-                    mpz_init(temp2);
-                    mpz_xor(temp2, i->backend().data(), std::get<0>(prefix).backend().data());
-                    //std::get<1>(prefix) = std::min((size_t)std::get<1>(prefix), (size_t)lsb(((*i) ^ (alpha_t)std::get<0>(prefix))));
-                    std::get<1>(prefix) = std::min((size_t)std::get<1>(prefix), mpz_scan1(temp2, 0));
-                    clear_after(std::get<0>(prefix), std::get<1>(prefix));
-                    mpz_clear(temp2);
-                    if (std::get<1>(prefix) == 0) {
-                        break;
-                    }
-                }
-            }
-            if (std::get<1>(prefix) == MAXNUM) {
-                std::get<1>(prefix) = (std::get<0>(prefix) != 0) ? msb((alpha_t)std::get<0>(prefix))+1 : 0;
-            } else {
-                allequal = false;
-            }
-            //set the last bit to indicate the length of the prefix
-            bit_set(std::get<0>(prefix), std::get<1>(prefix));
-        }
-        return std::make_tuple(std::get<0>(prefix), allequal);
-
-    }
-
     size_t lcb_(const mpz_t &temp, const mpz_t &pref) {
         size_t newlength;
         mpz_t temp2;
@@ -502,6 +467,40 @@ namespace WaveletTrie {
         return newlength;
     }
 
+
+
+    prefix_t longest_prefix(intvec_t::iterator ivb, intvec_t::iterator ive, size_t begin=0, size_t end=MAXNUM) {
+        std::pair<alpha_t, size_t> prefix(1,0);
+        bool allequal=true;
+        intvec_t::iterator i = ivb;
+        if ((ive - ivb) > 0) {
+            std::get<0>(prefix) = *ivb;
+            std::get<1>(prefix) = MAXNUM;
+            for (++i;i != ive;++i) {
+                if (*i != std::get<0>(prefix)) {
+                    size_t newlength = lcb_(i->backend().data(), std::get<0>(prefix).backend().data());
+                    if (newlength < std::get<1>(prefix)) {
+                        std::get<1>(prefix) = newlength;
+                        clear_after(std::get<0>(prefix), newlength);
+                    }
+                    if (std::get<1>(prefix) == 0) {
+                        break;
+                    }
+                }
+            }
+            if (std::get<1>(prefix) == MAXNUM) {
+                std::get<1>(prefix) = (std::get<0>(prefix) != 0) ? msb((alpha_t)std::get<0>(prefix)) + 1 : 0;
+            } else {
+                allequal = false;
+            }
+            //set the last bit to indicate the length of the prefix
+            mpz_setbit(std::get<0>(prefix).backend().data(), std::get<1>(prefix));
+            //bit_set(std::get<0>(prefix), std::get<1>(prefix));
+        }
+        return std::make_tuple(std::get<0>(prefix), allequal);
+
+    }
+
     void update_pref_(mpz_t &pref, mpz_t &temp, bool &set, annot_t &prefix, size_t &length) {
         if (mpz_cmp(temp, pref) != 0) {
             if (!set) {
@@ -516,12 +515,6 @@ namespace WaveletTrie {
             }
         }
     }
-
-    struct BitComp {
-        bool operator()(const cpp_int &a, const cpp_int &b) {
-            return mpz_tstbit(a.backend().data(), 0) < mpz_tstbit(b.backend().data(), 0);
-        }
-    };
 
 
     //do a radix sort where the original list stores the even numbers
