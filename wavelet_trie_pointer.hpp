@@ -242,11 +242,22 @@ namespace WaveletTrie {
         size_t i = 0;
         size_t popcnt = 0;
 
-        for (auto it = begin; it != rbegin; ++it) {
-            target.set_int(start + i, *it, bs);
-            popcnt += sdsl::bits::cnt(*it);
-            i += bs;
+        if (start % bs == 0) {
+            auto jt = target.data() + (start / bs);
+            for (auto it = begin; it != rbegin; ++it) {
+                popcnt += sdsl::bits::cnt(*it);
+                *jt = *it;
+                ++jt;
+            }
+            i = (rbegin - begin) * bs;
+        } else {
+            for (auto it = begin; it != rbegin; ++it) {
+                target.set_int(start + i, *it, bs);
+                popcnt += sdsl::bits::cnt(*it);
+                i += bs;
+            }
         }
+
         size_t tail = source.get_int(i, source.size() - i);
         popcnt += sdsl::bits::cnt(tail);
         target.set_int(start + i, tail, source.size() - i);
