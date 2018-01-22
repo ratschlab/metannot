@@ -37,20 +37,20 @@ namespace WaveletTrie {
     typedef boost::multiprecision::mpz_int cpp_int;
     typedef bool (*bittest_t)(const cpp_int&, uint32_t i);
     bittest_t bit_test = boost::multiprecision::bit_test;
-    /*
     typedef cpp_int& (*bitset_t)(cpp_int&, uint32_t i);
     bitset_t bit_set = boost::multiprecision::bit_set;
     bitset_t bit_unset = boost::multiprecision::bit_unset;
     typedef uint32_t (*sigbit_t)(const cpp_int&);
     sigbit_t msb = boost::multiprecision::msb;
     sigbit_t lsb = boost::multiprecision::lsb;
-    */
 
     //typedef array_int::array_int annot_t;
     typedef cpp_int annot_t;
     typedef std::vector<annot_t> intvec_t;
-    typedef sdsl::sd_vector<> beta_t;
+    //typedef sdsl::sd_vector<> beta_t;
     //typedef sdsl::rrr_vector<> beta_t;
+    typedef sdsl::bit_vector beta_t;
+    size_t beta_blocksize = 64;
     typedef beta_t::rank_1_type rank1_t;
     typedef beta_t::rank_0_type rank0_t;
     //typedef array_int::array_int alpha_t;
@@ -99,27 +99,70 @@ namespace WaveletTrie {
             ~Node();
             size_t add(intvec_t *iv, size_t begin, size_t end, prefix_t prefix);
             void append(Node *other, bool leftorright=false, size_t addme=0, size_t addother=0);
-            alpha_t alpha=1;
-            beta_t beta;
-            rank1_t rank1;
-            rank0_t rank0;
-            Node *child[2] = {NULL, NULL};
-            static bool process_node(std::tuple<Node*, intvec_t*, prefix_t, size_t> &curnode);
+            static bool process_node(std::tuple<Node*, std::pair<intvec_t::iterator, intvec_t::iterator>, prefix_t, size_t> &curnode);
             int move_label_down(size_t ol, size_t add=0);
             void breakleaf(size_t addme);
             static Node* merge(std::vector<Node*>::iterator begin, std::vector<Node*>::iterator end);
             void set_beta(const beta_t &beta) {
                 this->beta = beta;
-                sdsl::util::init_support(this->rank1, &(this->beta));
-                sdsl::util::init_support(this->rank0, &(this->beta));
+                requires_update[0] = true;
+                requires_update[1] = true;
             }
             void set_beta(beta_t&& beta) {
                 this->beta = beta;
-                sdsl::util::init_support(this->rank1, &(this->beta));
-                sdsl::util::init_support(this->rank0, &(this->beta));
+                requires_update[0] = true;
+                requires_update[1] = true;
             }
+
+            size_t rank1(size_t&& i) {
+                return this->rank1(static_cast<const size_t&>(i));
+            }
+
+            size_t rank0(size_t&& i) {
+                return this->rank0(static_cast<const size_t&>(i));
+            }
+
+            size_t rank1(const size_t &i) {
+                if (requires_update[1]) {
+                    init_r1();
+                    requires_update[1] = false;
+                } else {
+                    this->rank1_.set_vector(&(this->beta));
+                }
+                return this->rank1_(i);
+            }
+
+            size_t rank0(const size_t &i) {
+                if (requires_update[0]) {
+                    init_r0();
+                    requires_update[0] = false;
+                } else {
+                    this->rank0_.set_vector(&(this->beta));
+                }
+                return this->rank0_(i);
+            }
+
+            alpha_t alpha = 1;
+            beta_t beta;
+            rank1_t rank1_;
+            rank0_t rank0_;
+            Node *child[2] = {NULL, NULL};
+        private:
+            void init_r1() {
+                sdsl::util::init_support(this->rank1_, &(this->beta));
+            }
+            void init_r0() {
+                sdsl::util::init_support(this->rank0_, &(this->beta));
+            }
+            bool requires_update[2] = {true, true};
     };
-    typedef std::tuple<Node*, intvec_t*, prefix_t, size_t> nodestate_t;
+
+    typedef std::tuple<
+        Node*, 
+        std::pair<intvec_t::iterator, intvec_t::iterator>, 
+        prefix_t, 
+        size_t
+    > nodestate_t;
 
     Node::Node() {
     }
@@ -127,8 +170,8 @@ namespace WaveletTrie {
     Node::Node(Node *that, bool copy) {
         this->alpha = that->alpha;
         this->beta = that->beta;
-        this->rank1 = that->rank1;
-        this->rank0 = that->rank0;
+        this->rank1_ = that->rank1_;
+        this->rank0_ = that->rank0_;
         if (that->child[0]) {
             if (copy) {
                 this->child[0] = new Node(that->child[0]);
@@ -190,14 +233,21 @@ namespace WaveletTrie {
     }
     */
 
-    void copy_bits(bv_t &target, beta_t &source, size_t start=0, size_t t_bs=15) {
+    uint64_t copy_bits_count(bv_t &target, beta_t &source, size_t start=0, size_t t_bs=beta_blocksize) {
         assert(target.size()-start >= source.size());
         //bv_t test = target;
-        size_t i=0;
-        for (;i+t_bs<source.size();i+=t_bs) {
-            target.set_int(start+i, source.get_int(i, t_bs), t_bs);
+        size_t i = 0;
+        size_t popcnt = 0;
+        size_t cur;
+        for (; i + t_bs < source.size(); i += t_bs) {
+            cur = source.get_int(i, t_bs);
+            popcnt += sdsl::bits::cnt(cur);
+            target.set_int(start + i, cur, t_bs);
         }
-        target.set_int(start+i, source.get_int(i, source.size()-i), source.size()-i);
+        cur = source.get_int(i, source.size() - i);
+        popcnt += sdsl::bits::cnt(cur);
+        target.set_int(start+i, cur, source.size() - i);
+        return popcnt;
         /*
         //sanity check
         for (size_t i=0;i<source.size();++i)
@@ -225,14 +275,15 @@ namespace WaveletTrie {
         //oa & this->alpha;
         sd.serialize(os);
         this->beta.serialize(oas);
-        this->rank1.serialize(oas);
-        this->rank0.serialize(oas);
+        //this->rank1.serialize(oas);
+        //this->rank0.serialize(oas);
     }
 
     class WTR {
         public:
             WTR();
             WTR(intvec_t *iv, size_t osize, size_t batch);
+            WTR(WTR&& a);
             ~WTR();
             annot_t at(size_t i);
             void serialize(std::ofstream &os);
@@ -242,7 +293,7 @@ namespace WaveletTrie {
             bool reconstruct(intvec_t &iv);
             void print(std::ostream &os);
             void print();
-            void append(WTR &other);
+            void append(WTR&& other);
             static WTR merge(std::vector<WTR*>::iterator begin, std::vector<WTR*>::iterator end);
         private:
             size_t height=0;
@@ -252,7 +303,7 @@ namespace WaveletTrie {
             void check_structure();
     };
 
-    void WTR::append(WTR &other) {
+    void WTR::append(WTR&& other) {
         this->size += other.size;
         #pragma omp parallel
         #pragma omp single nowait
@@ -340,6 +391,11 @@ namespace WaveletTrie {
         }
     }
 
+    WTR::WTR(WTR&& a) {
+        this->root = a.root;
+        a.root = NULL;
+    }
+
     WTR::~WTR() {
         if (this->root != NULL) {
             delete this->root;
@@ -350,9 +406,6 @@ namespace WaveletTrie {
     void Node::breakleaf(size_t addme) {
         if (addme) {
             this->set_beta(beta_t(bv_t(addme)));
-            //this->beta = beta_t(bv_t(addme));
-            //sdsl::util::init_support(this->rank1, &(this->beta));
-            //sdsl::util::init_support(this->rank0, &(this->beta));
 #ifdef DBGDEBUG
             assert(this->child[0] == NULL);
             assert(this->child[1] == NULL);
@@ -379,10 +432,10 @@ namespace WaveletTrie {
                     //std::get<1>(prefix) = std::min((size_t)std::get<1>(prefix), (size_t)lsb(((*i) ^ (alpha_t)std::get<0>(prefix))));
                     std::get<1>(prefix) = std::min((size_t)std::get<1>(prefix), mpz_scan1(temp2, 0));
                     clear_after(std::get<0>(prefix), std::get<1>(prefix));
+                    mpz_clear(temp2);
                     if (std::get<1>(prefix) == 0) {
                         break;
                     }
-                    mpz_clear(temp2);
                 }
             }
             if (std::get<1>(prefix) == MAXNUM) {
@@ -475,17 +528,19 @@ namespace WaveletTrie {
         }
     };
 
-    bv_t distribute_(nodestate_t &curnode, intvec_t** children, annot_t* prefices, bool* set, size_t* lengths) {
+    //bv_t distribute_(nodestate_t &curnode, intvec_t** children, annot_t* prefices, bool* set, size_t* lengths) {
+    bv_t distribute_(nodestate_t &curnode, intvec_t::iterator &split, annot_t* prefices, bool* set, size_t* lengths) {
         size_t length = mpz_sizeinbase(std::get<0>(curnode)->alpha.backend().data(), 2) - 1;
         bool curbit;
         mpz_t bv_mpz;
         mpz_init(bv_mpz);
-        auto begin = std::get<1>(curnode)->begin();
+        auto begin = std::get<1>(curnode).first;
         auto it = begin;
         size_t z_count = 0;
+        std::vector<cpp_int> children[2];
         //mpz_t temp;
         //mpz_init(temp);
-        for (; it != std::get<1>(curnode)->end(); ++it) {
+        for (; it != std::get<1>(curnode).second; ++it) {
             mpz_t& old = it->backend().data();
             curbit = mpz_tstbit(old, length);
             mpz_t& pref = prefices[curbit].backend().data();
@@ -497,15 +552,16 @@ namespace WaveletTrie {
             //remove prefix
             //mpz_tdiv_q_2exp(temp, old, length + 1); // temp = old >> (length + 1)
             mpz_tdiv_q_2exp(old, old, length); // temp = old >> (length + 1)
-            //children[curbit]->emplace_back(old);
+            children[curbit].emplace_back(old);
             if (lengths[curbit] > 0) {
                 update_pref_(pref, old, set[curbit], prefices[curbit], lengths[curbit]);
             }
         }
-        bv_t bv = copy_bits(bv_mpz, std::get<1>(curnode)->size());
+        bv_t bv = copy_bits(bv_mpz, std::get<1>(curnode).second - begin);
         mpz_clear(bv_mpz);
         //mpz_clear(temp);
-        std::stable_sort(std::get<1>(curnode)->begin(), std::get<1>(curnode)->end(), BitComp());
+        //std::stable_sort(std::get<1>(curnode).first, std::get<1>(curnode).second, BitComp());
+        /*
         if (z_count > 0 && z_count < std::get<1>(curnode)->size()) {
             children[0]->insert(
                     children[0]->end(), 
@@ -518,16 +574,23 @@ namespace WaveletTrie {
                     std::make_move_iterator(std::get<1>(curnode)->end())
             );
         }
+        */
+        split = std::get<1>(curnode).first + z_count;
+        std::swap_ranges(children[0].begin(), children[0].end(), std::get<1>(curnode).first);
+        std::swap_ranges(children[1].begin(), children[1].end(), split);
         return bv;
     }
 
 
     bool Node::process_node(nodestate_t &curnode) {
-        while (std::get<1>(curnode)) {
-            if (std::get<1>(curnode)->size()) {
+        //while (std::get<1>(curnode)) {
+        while (std::get<1>(curnode).second != std::get<1>(curnode).first) {
+            if (std::get<1>(curnode).second != std::get<1>(curnode).first) {
+            //if (std::get<1>(curnode)->size()) {
                 std::get<0>(curnode)->alpha = std::get<0>(std::get<2>(curnode));
                 if (!std::get<1>(std::get<2>(curnode))) {
-                    intvec_t* children[2] = {new intvec_t(), new intvec_t()};
+                    //intvec_t* children[2] = {new intvec_t(), new intvec_t()};
+                    intvec_t::iterator split;
                     std::get<0>(curnode)->child[0] = new Node();
                     std::get<0>(curnode)->child[1] = new Node();
                     annot_t prefices[2];
@@ -536,7 +599,7 @@ namespace WaveletTrie {
                     prefix_t cprefix[2] = {prefix_t(0, true), prefix_t(0, true)};
                     bool set[2] = {false, false};
                     size_t lengths[2] = {MAXNUM, MAXNUM};
-                    std::get<0>(curnode)->set_beta(beta_t(distribute_(curnode, children, prefices, set, lengths)));
+                    std::get<0>(curnode)->set_beta(beta_t(distribute_(curnode, split, prefices, set, lengths))); //this has side effects
                     for (size_t i=0;i<2;++i) {
                         std::get<0>(cprefix[i]) = prefices[i];
                         if (lengths[i] == MAXNUM) {
@@ -548,41 +611,55 @@ namespace WaveletTrie {
                         bit_set(std::get<0>(cprefix[i]), lengths[i]);
                     }
 #ifdef DBGDEBUG
-                    assert(children[0]->size());
-                    assert(children[1]->size());
+                    assert(split != std::get<1>(curnode).first);
+                    assert(split != std::get<1>(curnode).second);
+//                    assert(children[0]->size());
+//                    assert(children[1]->size());
 #endif
-                    delete std::get<1>(curnode);
-                    nodestate_t leftnode = std::make_tuple(std::get<0>(curnode)->child[0], children[0], cprefix[0], std::get<3>(curnode));
-                    nodestate_t rightnode = std::make_tuple(std::get<0>(curnode)->child[1], children[1], cprefix[1], std::get<3>(curnode));
+                    //delete std::get<1>(curnode);
+                    //nodestate_t leftnode = std::make_tuple(std::get<0>(curnode)->child[0], children[0], cprefix[0], std::get<3>(curnode));
+                    //nodestate_t rightnode = std::make_tuple(std::get<0>(curnode)->child[1], children[1], cprefix[1], std::get<3>(curnode));
+                    nodestate_t leftnode = std::make_tuple(
+                            std::get<0>(curnode)->child[0], 
+                            std::make_pair(std::get<1>(curnode).first, split), 
+                            cprefix[0], 
+                            std::get<3>(curnode)
+                    );
+                    nodestate_t rightnode = std::make_tuple(
+                            std::get<0>(curnode)->child[1], 
+                            std::make_pair(split, std::get<1>(curnode).second), 
+                            cprefix[1], 
+                            std::get<3>(curnode)
+                    );
                     //put the side with the longer prefix in a new task
                     if (lengths[0] > lengths[1]) {
-                        #pragma omp task if (children[0]->size() > TASKMIN)
+                        #pragma omp task if (split - std::get<1>(curnode).first > TASKMIN)
                         process_node(leftnode);
                         curnode = rightnode;
                     } else {
-                        #pragma omp task if (children[1]->size() > TASKMIN)
+                        #pragma omp task if (std::get<1>(curnode).second - split > TASKMIN)
                         process_node(rightnode);
                         curnode = leftnode;
                     }
                 } else {
-                    std::get<0>(curnode)->breakleaf(std::get<1>(curnode)->size());
-                    delete std::get<1>(curnode);
-                    std::get<1>(curnode) = NULL;
+                    std::get<0>(curnode)->breakleaf(std::get<1>(curnode).second - std::get<1>(curnode).first);
+                    //delete std::get<1>(curnode);
+                    std::get<1>(curnode).first = std::get<1>(curnode).second;
                     return true;
                 }
             } else {
-                std::get<0>(curnode)->breakleaf(std::get<1>(curnode)->size());
-                delete std::get<1>(curnode);
-                std::get<1>(curnode) = NULL;
+                std::get<0>(curnode)->breakleaf(std::get<1>(curnode).second - std::get<1>(curnode).first);
+                //delete std::get<1>(curnode);
+                std::get<1>(curnode).first = std::get<1>(curnode).second;
+                //std::get<1>(curnode) = NULL;
                 return true;
             }
         }
         return true;
     }
 
-    //TODO: replace process_node(start) with process_node(begin, end)
     size_t Node::add(intvec_t *iv, size_t begin, size_t end, prefix_t prefix) {
-        nodestate_t start = std::make_tuple(this, iv, prefix, 0);
+        nodestate_t start = std::make_tuple(this, std::make_pair(iv->begin(), iv->end()), prefix, 0);
         #pragma omp task
         Node::process_node(start);
         return 0;
@@ -603,7 +680,7 @@ namespace WaveletTrie {
         mpz_tdiv_q_2exp(temp, this->alpha.backend().data(), ol); //this makes sure that the first bit in an internal node indicates its parent
         //mpz_tdiv_q_2exp(temp, this->alpha.backend().data(), ol + 1);
         //temp_node->alpha = this->alpha >> (ol+1);
-        temp_node->beta = this->beta;
+        temp_node->set_beta(this->beta);
         temp_node->child[0] = this->child[0];
         temp_node->child[1] = this->child[1];
         this->set_beta(beta_t(bv_t(this->beta.size() == 0 ? add : this->beta.size(), bit_test(this->alpha, ol))));
@@ -649,13 +726,13 @@ namespace WaveletTrie {
                 }
             }
             this->move_label_down(lsb(this->alpha));
-            bv_t bv(this->beta.size()+addother);
-            size_t i=(leftorright ? 0 : addother);
-            copy_bits(bv, this->beta, i);
+
+            bv_t bv(this->beta.size() + addother);
+
+            //TODO: slow
+            copy_bits_count(bv, this->beta, (leftorright ? 0 : addother));
+
             this->set_beta(beta_t(bv));
-            //this->beta = beta_t(bv);
-            //sdsl::util::init_support(this->rank1, &(this->beta));
-            //sdsl::util::init_support(this->rank0, &(this->beta));
 #ifdef DBGDEBUG
             this->print(true);
             std::cout << "--------\n";
@@ -731,8 +808,8 @@ namespace WaveletTrie {
 #endif
             this->alpha = other->alpha;
             this->beta = other->beta;
-            this->rank1 = other->rank1;
-            this->rank0 = other->rank0;
+            this->rank1_ = other->rank1_;
+            this->rank0_ = other->rank0_;
             if (other->child[0] != NULL)
                 this->child[0] = new Node(other->child[0], false);
             if (other->child[1] != NULL)
@@ -785,8 +862,15 @@ namespace WaveletTrie {
 
         //fix alphas
         bv_t bv(this->beta.size()+other->beta.size());
-        copy_bits(bv, this->beta);
-        copy_bits(bv, other->beta, this->beta.size());
+
+        //TODO: this takes up a lot of time
+        //Concatenate betas
+        size_t popcount[2] = {
+            copy_bits_count(bv, this->beta),
+            copy_bits_count(bv, other->beta, this->beta.size())
+        };
+        
+
 #ifdef DBGDEBUG
         std::cout << bv << "\n";
         this->print(true);
@@ -794,25 +878,26 @@ namespace WaveletTrie {
         other->print(true);
         std::cout << "--------\n";
 #endif
-        this->rank0.set_vector(&(this->beta));
-        other->rank0.set_vector(&(other->beta));
-        this->rank1.set_vector(&(this->beta));
-        other->rank1.set_vector(&(other->beta));
         if (this->child[0] != NULL) {
-            #pragma omp task if(this->rank0(this->beta.size()) > TASKMIN || other->rank0(other->beta.size()) > TASKMIN)
-            this->child[0]->append(other->child[0], 0, this->rank0(this->beta.size()), other->rank0(other->beta.size()));
+            #pragma omp task if(this->beta.size() - popcount[0] > TASKMIN || other->beta.size() - popcount[1] > TASKMIN)
+            this->child[0]->append(other->child[0], 0, this->beta.size() - popcount[0], other->beta.size() - popcount[1]);
+            //this->child[0]->append(other->child[0], 0, this->rank0(this->beta.size()), other->rank0(other->beta.size()));
         } else if (other->child[0] != NULL) {
-            if (this->rank0(this->beta.size()) > 0) {
+            //if (this->rank0(this->beta.size()) > 0) {
+            if (popcount[0] != this->beta.size()) {
                 std::cerr << this->beta << "\n";
+                std::cerr << popcount[0] << " " << this->beta.size() << " " << this->rank1(this->beta.size()) << "\n";
                 assert(false);
             }
             this->child[0] = new Node(other->child[0], false);
         }
         if (this->child[1] != NULL) {
-            #pragma omp task if(this->rank1(this->beta.size()) > TASKMIN || other->rank1(other->beta.size()) > TASKMIN)
-            this->child[1]->append(other->child[1], 1, this->rank1(this->beta.size()), other->rank1(other->beta.size()));
+            #pragma omp task if(popcount[0] > TASKMIN || popcount[1] > TASKMIN)
+            this->child[1]->append(other->child[1], 1, popcount[0], popcount[1]);
+            //this->child[1]->append(other->child[1], 1, this->rank1(this->beta.size()), other->rank1(other->beta.size()));
         } else if (other->child[1] != NULL) {
-            if (this->rank1(this->beta.size()) > 0) {
+            //if (this->rank1(this->beta.size()) > 0) {
+            if (popcount[0] > 0) {
                 std::cerr << this->beta << "\n";
                 assert(false);
             }
@@ -820,9 +905,6 @@ namespace WaveletTrie {
         }
         #pragma omp taskwait
         this->set_beta(beta_t(bv));
-        //this->beta = beta_t(bv);
-        //sdsl::util::init_support(this->rank1, &(this->beta));
-        //sdsl::util::init_support(this->rank0, &(this->beta));
     }
 
     //TODO: rewrite without recursion
@@ -875,12 +957,10 @@ namespace WaveletTrie {
     WTR::WTR(intvec_t *iv, size_t osize, size_t batch) {
         this->root = new Node();
         if (batch != 0 && iv->size() != 0) {
-            size_t tsize=0;
             prefix_t prefix;
             //std::cout << "Computing alpha\n";
             prefix = longest_prefix(iv->begin(), std::min(iv->begin()+batch, iv->end()), 0, osize); 
             //std::cout << "Computing wavelet trie\n";
-            tsize = iv->size();
             #pragma omp parallel
             #pragma omp single nowait
             this->root->add(iv, 0, osize, prefix); 
@@ -888,37 +968,6 @@ namespace WaveletTrie {
             this->print();
             std::cout << "-------------\n\n";
 #endif
-            this->size = tsize;
-            //Node *other;
-            std::vector<Node*> others(tsize/batch,NULL);
-            #pragma omp parallel for shared(others)
-            for (size_t cursize = batch; cursize < tsize; cursize += batch) {
-                //other = new Node();
-                others[cursize/batch-1] = new Node();
-                //std::cout << "Computing alpha\n";
-                //#pragma omp parallel
-                //#pragma omp single nowait
-                //std::cout << "Computing wavelet trie\n";
-                prefix = longest_prefix(iv->begin()+cursize, std::min(iv->begin()+cursize+batch, iv->end()), 0, osize); 
-                #pragma omp parallel
-                #pragma omp single nowait
-                others[cursize/batch-1]->add(iv, 0, osize, prefix); 
-                if ((cursize/batch-1) % 100 == 0)
-                    std::cout << "\n";
-                std::cout << "." << std::flush;
-                
-            }
-            if (others.size() && others[0]) {
-                std::cout << "\nMerging\n";
-                Node *a;
-                #pragma omp parallel
-                #pragma omp single nowait
-                a = Node::merge(others.begin(), others.end());
-                #pragma omp parallel
-                #pragma omp single nowait
-                this->root->append(a, false);
-                delete a;
-            }
         }
     }
 
@@ -942,11 +991,11 @@ namespace WaveletTrie {
                 len += mpz_sizeinbase(cur, 2) - 1;
                 curbit = curnode->beta[i];
                 if (curbit) {
-                    curnode->rank1.set_vector(&(curnode->beta));
+                    //curnode->rank1.set_vector(&(curnode->beta));
                     i = curnode->rank1(i);
                 } else {
                     //bit_unset(annot, len - 1);
-                    curnode->rank0.set_vector(&(curnode->beta));
+                    //curnode->rank0.set_vector(&(curnode->beta));
                     i = curnode->rank0(i);
                 }
                 mpz_clrbit(annot_a, len);
@@ -1078,6 +1127,7 @@ namespace WaveletTrie {
     }
 
     WTR::WTR() {
+        this->root = new Node();
     }
 
 }
