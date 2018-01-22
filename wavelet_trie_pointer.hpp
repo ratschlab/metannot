@@ -236,20 +236,6 @@ namespace WaveletTrie {
     uint64_t copy_bits_count(bv_t &target, beta_t &source, size_t start=0, size_t t_bs=beta_blocksize) {
         assert(target.size() >= source.size() + start);
 
-        /*
-        size_t i = 0;
-        size_t popcnt = 0;
-        size_t cur;
-        for (; i + t_bs < source.size(); i += t_bs) {
-            cur = source.get_int(i, t_bs);
-            popcnt += sdsl::bits::cnt(cur);
-            target.set_int(start + i, cur, t_bs);
-        }
-        cur = source.get_int(i, source.size() - i);
-        popcnt += sdsl::bits::cnt(cur);
-        target.set_int(start+i, cur, source.size() - i);
-        */
-
         size_t bs = sizeof(*source.data()) << 3;
         auto begin = source.data();
         auto rbegin = source.data() + (source.capacity() >> 6) - 1;
@@ -469,70 +455,60 @@ namespace WaveletTrie {
 
     }
 
-    void xor_early_cut(mpz_t &temp2, const mpz_t &temp, const mpz_t &pref) {
-        //reference for full length
-        mpz_xor(temp2, temp, pref);
-        /*
-
+    size_t lcb_(const mpz_t &temp, const mpz_t &pref) {
+        size_t newlength;
+        mpz_t temp2;
+        mpz_init(temp2);
         size_t size[2] = {
             mpz_size(temp),
             mpz_size(pref)
         };
-        size_t sizemin;
-        bool sel; //true iff size(temp) < size(pref)
-        //reserve larger space
-        if (size[0] < size[1]) {
-            mpz_set(temp2, pref);
-            sizemin = size[0];
-            sel = true;
-        } else {
-            mpz_set(temp2, temp);
-            sizemin = size[1];
-            sel = false;
-        }
-        size_t newsize = mpz_size(temp2);
-        size_t i = 0;
-        const mp_limb_t* ptrs[2] = {
+        size_t sizemin = std::min(size[0], size[1]);
+        mp_srcptr ptrs[2] = {
             mpz_limbs_read(temp),
             mpz_limbs_read(pref)
         };
-        mp_limb_t *nptr = mpz_limbs_modify(temp2, 0);
+        mp_ptr nptr = mpz_limbs_modify(temp2, 0);
+        size_t i = 0;
         for (; i < sizemin; ++i) {
-            //mp_limb_t *nptr = mpz_limbs_modify(temp2, i);
             mpn_xor_n(nptr, ptrs[0], ptrs[1], 1);
-            ptrs[0] += sizeof(*(ptrs[0]));
-            ptrs[1] += sizeof(*(ptrs[1]));
+            ++ptrs[0];
+            ++ptrs[1];
             if (!mpn_zero_p(nptr, 1)) {
                 break;
             }
-            nptr += sizeof(*(nptr));
         }
-        //only run if reached the end and there's more stuff
         if (i == sizemin) {
-            for (; i < newsize && !mpn_popcount(ptrs[sel], 1); ++i) {
-                mpn_copyi(nptr,ptrs[sel], 1);
-                if (!mpn_zero_p(ptrs[sel], 1)) {
-                    //when first non-zero limb found
-                    break;
-                }
-                nptr += sizeof(*(nptr));
-                ptrs[sel] += sizeof(*(ptrs[sel]));
+            if (size[0] <= size[1]) {
+                newlength = i * 8 + mpz_scan1(pref, sizemin * 8);
+            } else {
+                newlength = i * 8 + mpz_scan1(temp, sizemin * 8);
             }
+        } else {
+            newlength = i * 8 + mpn_scan1(nptr, 0);
+        }
+
+        //reference
+        /*
+        mpz_xor(temp2, temp, pref);
+        size_t nnewlength = mpz_scan1(temp2, 0);
+        if (nnewlength != newlength) {
+            std::cerr << nnewlength << " " << newlength << "\n";
+            std::cerr << i << " " << sizemin << "\n";
+            assert(false);
         }
         */
+        mpz_clear(temp2);
+        return newlength;
     }
 
-    inline void update_pref_(mpz_t &pref, mpz_t &temp, bool &set, annot_t &prefix, size_t &length) {
+    void update_pref_(mpz_t &pref, mpz_t &temp, bool &set, annot_t &prefix, size_t &length) {
         if (mpz_cmp(temp, pref) != 0) {
             if (!set) {
                 prefix = temp;
                 set=true;
             } else {
-                mpz_t temp2;
-                mpz_init(temp2);
-                mpz_xor(temp2, temp, pref);
-                size_t newlength = mpz_scan1(temp2, 0);
-                mpz_clear(temp2);
+                size_t newlength = lcb_(temp, pref);
                 if (newlength < length) {
                     length = newlength;
                     clear_after(prefix, newlength);
@@ -547,29 +523,28 @@ namespace WaveletTrie {
         }
     };
 
-    //bv_t distribute_(nodestate_t &curnode, intvec_t** children, annot_t* prefices, bool* set, size_t* lengths) {
+
+    //do a radix sort where the original list stores the even numbers
     bv_t distribute_(nodestate_t &curnode, intvec_t::iterator &split, annot_t* prefices, bool* set, size_t* lengths) {
         size_t length = mpz_sizeinbase(std::get<0>(curnode)->alpha.backend().data(), 2) - 1;
         bool curbit;
         mpz_t bv_mpz;
         mpz_init(bv_mpz);
         auto begin = std::get<1>(curnode).first;
-        auto it = begin;
-        size_t z_count = 0;
+        split = begin;
         std::vector<cpp_int> right_children;
-        for (; it != std::get<1>(curnode).second; ++it) {
+        for (auto it = begin; it != std::get<1>(curnode).second; ++it) {
             mpz_t& old = it->backend().data();
             curbit = mpz_tstbit(old, length);
             mpz_t& pref = prefices[curbit].backend().data();
             //remove prefix
-            mpz_tdiv_q_2exp(old, old, length); // temp = old >> (length + 1)
-            //children[curbit].emplace_back(old);
+            mpz_tdiv_q_2exp(old, old, length);
             if (curbit) {
                 mpz_setbit(bv_mpz, it - begin);
                 right_children.emplace_back(old);
             } else {
-                *(std::get<1>(curnode).first + z_count) = old;
-                z_count++;
+                *split = old;
+                ++split;
             }
             if (lengths[curbit] > 0) {
                 update_pref_(pref, old, set[curbit], prefices[curbit], lengths[curbit]);
@@ -577,8 +552,6 @@ namespace WaveletTrie {
         }
         bv_t bv = copy_bits(bv_mpz, std::get<1>(curnode).second - begin);
         mpz_clear(bv_mpz);
-        split = std::get<1>(curnode).first + z_count;
-        //std::swap_ranges(children[0].begin(), children[0].end(), std::get<1>(curnode).first);
         std::swap_ranges(right_children.begin(), right_children.end(), split);
         return bv;
     }
@@ -883,9 +856,7 @@ namespace WaveletTrie {
         if (this->child[0] != NULL) {
             #pragma omp task if(this->beta.size() - popcount[0] > TASKMIN || other->beta.size() - popcount[1] > TASKMIN)
             this->child[0]->append(other->child[0], 0, this->beta.size() - popcount[0], other->beta.size() - popcount[1]);
-            //this->child[0]->append(other->child[0], 0, this->rank0(this->beta.size()), other->rank0(other->beta.size()));
         } else if (other->child[0] != NULL) {
-            //if (this->rank0(this->beta.size()) > 0) {
             if (popcount[0] != this->beta.size()) {
                 std::cerr << this->beta << "\n";
                 std::cerr << popcount[0] << " " << this->beta.size() << " " << this->rank1(this->beta.size()) << "\n";
@@ -896,9 +867,7 @@ namespace WaveletTrie {
         if (this->child[1] != NULL) {
             #pragma omp task if(popcount[0] > TASKMIN || popcount[1] > TASKMIN)
             this->child[1]->append(other->child[1], 1, popcount[0], popcount[1]);
-            //this->child[1]->append(other->child[1], 1, this->rank1(this->beta.size()), other->rank1(other->beta.size()));
         } else if (other->child[1] != NULL) {
-            //if (this->rank1(this->beta.size()) > 0) {
             if (popcount[0] > 0) {
                 std::cerr << this->beta << "\n";
                 assert(false);
