@@ -234,8 +234,9 @@ namespace WaveletTrie {
     */
 
     uint64_t copy_bits_count(bv_t &target, beta_t &source, size_t start=0, size_t t_bs=beta_blocksize) {
-        assert(target.size()-start >= source.size());
-        //bv_t test = target;
+        assert(target.size() >= source.size() + start);
+
+        /*
         size_t i = 0;
         size_t popcnt = 0;
         size_t cur;
@@ -247,9 +248,27 @@ namespace WaveletTrie {
         cur = source.get_int(i, source.size() - i);
         popcnt += sdsl::bits::cnt(cur);
         target.set_int(start+i, cur, source.size() - i);
+        */
+
+        size_t bs = sizeof(*source.data()) << 3;
+        auto begin = source.data();
+        auto rbegin = source.data() + (source.capacity() >> 6) - 1;
+        size_t i = 0;
+        size_t popcnt = 0;
+
+        for (auto it = begin; it != rbegin; ++it) {
+            target.set_int(start + i, *it, bs);
+            popcnt += sdsl::bits::cnt(*it);
+            i += bs;
+        }
+        size_t tail = source.get_int(i, source.size() - i);
+        popcnt += sdsl::bits::cnt(tail);
+        target.set_int(start + i, tail, source.size() - i);
         return popcnt;
+
         /*
         //sanity check
+        //bv_t test = target;
         for (size_t i=0;i<source.size();++i)
             test[start+i]=source[i];
         if (test != target) {
