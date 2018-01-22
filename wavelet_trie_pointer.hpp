@@ -537,47 +537,30 @@ namespace WaveletTrie {
         auto begin = std::get<1>(curnode).first;
         auto it = begin;
         size_t z_count = 0;
-        std::vector<cpp_int> children[2];
-        //mpz_t temp;
-        //mpz_init(temp);
+        std::vector<cpp_int> right_children;
         for (; it != std::get<1>(curnode).second; ++it) {
             mpz_t& old = it->backend().data();
             curbit = mpz_tstbit(old, length);
             mpz_t& pref = prefices[curbit].backend().data();
+            //remove prefix
+            mpz_tdiv_q_2exp(old, old, length); // temp = old >> (length + 1)
+            //children[curbit].emplace_back(old);
             if (curbit) {
                 mpz_setbit(bv_mpz, it - begin);
+                right_children.emplace_back(old);
             } else {
+                *(std::get<1>(curnode).first + z_count) = old;
                 z_count++;
             }
-            //remove prefix
-            //mpz_tdiv_q_2exp(temp, old, length + 1); // temp = old >> (length + 1)
-            mpz_tdiv_q_2exp(old, old, length); // temp = old >> (length + 1)
-            children[curbit].emplace_back(old);
             if (lengths[curbit] > 0) {
                 update_pref_(pref, old, set[curbit], prefices[curbit], lengths[curbit]);
             }
         }
         bv_t bv = copy_bits(bv_mpz, std::get<1>(curnode).second - begin);
         mpz_clear(bv_mpz);
-        //mpz_clear(temp);
-        //std::stable_sort(std::get<1>(curnode).first, std::get<1>(curnode).second, BitComp());
-        /*
-        if (z_count > 0 && z_count < std::get<1>(curnode)->size()) {
-            children[0]->insert(
-                    children[0]->end(), 
-                    std::make_move_iterator(std::get<1>(curnode)->begin()),
-                    std::make_move_iterator(std::get<1>(curnode)->begin() + z_count)
-            );
-            children[1]->insert(
-                    children[1]->end(), 
-                    std::make_move_iterator(std::get<1>(curnode)->begin() + z_count),
-                    std::make_move_iterator(std::get<1>(curnode)->end())
-            );
-        }
-        */
         split = std::get<1>(curnode).first + z_count;
-        std::swap_ranges(children[0].begin(), children[0].end(), std::get<1>(curnode).first);
-        std::swap_ranges(children[1].begin(), children[1].end(), split);
+        //std::swap_ranges(children[0].begin(), children[0].end(), std::get<1>(curnode).first);
+        std::swap_ranges(right_children.begin(), right_children.end(), split);
         return bv;
     }
 
