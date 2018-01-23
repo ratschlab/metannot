@@ -243,17 +243,20 @@ namespace WaveletTrie {
         size_t popcnt = 0;
 
         if (start % bs == 0) {
-            auto jt = target.data() + (start / bs);
+            //auto jt = target.data() + (start / bs);
             for (auto it = begin; it != rbegin; ++it) {
-                popcnt += sdsl::bits::cnt(*it);
-                *jt = *it;
-                ++jt;
+                popcnt += __builtin_popcountl(*it);
+                //popcnt += sdsl::bits::cnt(*it);
+                //*jt = *it;
+                //++jt;
             }
             i = (rbegin - begin) * bs;
+            memcpy(target.data() + (start / bs), source.data(), i >> 3);
         } else {
             for (auto it = begin; it != rbegin; ++it) {
                 target.set_int(start + i, *it, bs);
-                popcnt += sdsl::bits::cnt(*it);
+                //popcnt += sdsl::bits::cnt(*it);
+                popcnt += __builtin_popcountl(*it);
                 i += bs;
             }
         }
@@ -663,9 +666,6 @@ namespace WaveletTrie {
         temp_node->child[0] = this->child[0];
         temp_node->child[1] = this->child[1];
         this->set_beta(beta_t(bv_t(this->beta.size() == 0 ? add : this->beta.size(), bit_test(this->alpha, ol))));
-        //this->beta = beta_t(bv_t(this->beta.size() == 0 ? add : this->beta.size(), bit_test(this->alpha, ol)));
-        //sdsl::util::init_support(this->rank1, &(this->beta));
-        //sdsl::util::init_support(this->rank0, &(this->beta));
         //this->alpha = (this->alpha & ((alpha_t(1) << (ol))-1)) | (alpha_t(1) << ol);
         clear_after(this->alpha, ol);
         bit_set(this->alpha, ol);
@@ -680,6 +680,18 @@ namespace WaveletTrie {
         assert(msb(this->alpha) == ol);
 #endif
         return 0;
+    }
+
+    void copy_bits_pad(bv_t &target, const bv_t &source, const size_t &addother) {
+        size_t oldsize = source.size();
+        target = source;
+        target.resize(oldsize + addother);
+        target.set_int(oldsize, 0, 64 - (oldsize % 64));
+        memset(
+                target.data() + ((oldsize + 63) >> 6), 
+                0,
+                ((target.capacity() >> 6) - ((oldsize + 63) >> 6)) << 3
+        );
     }
 
     void Node::append(Node *other, bool leftorright, size_t addme, size_t addother) {
@@ -706,10 +718,20 @@ namespace WaveletTrie {
             }
             this->move_label_down(lsb(this->alpha));
 
-            bv_t bv(this->beta.size() + addother);
+            
+            bv_t bv;
+            if (leftorright) {
+                copy_bits_pad(bv, this->beta, addother);
+            } else {
+                bv.resize(this->beta.size() + addother);
+                memset(bv.data(), 0, bv.capacity() >> 3);
+                //TODO: slow
+                copy_bits_count(bv, this->beta, addother);
+            }
 
             //TODO: slow
-            copy_bits_count(bv, this->beta, (leftorright ? 0 : addother));
+            //bv_t bv(this->beta.size() + addother);
+            //copy_bits_count(bv, this->beta, (leftorright ? 0 : addother));
 
             this->set_beta(beta_t(bv));
 #ifdef DBGDEBUG
@@ -840,14 +862,21 @@ namespace WaveletTrie {
 #endif
 
         //fix alphas
-        bv_t bv(this->beta.size()+other->beta.size());
-
-        //TODO: this takes up a lot of time
+        //bv_t bv(this->beta.size()+other->beta.size());
+        
+        //bv_t bv = this->beta;
+        //bv.resize(this->beta.size() + other->beta.size());
+        //bv.set_int(this->beta.size(), 0, 64 - (this->beta.size() % 64));
+        bv_t bv;
+        copy_bits_pad(bv, this->beta, other->beta.size());
         //Concatenate betas
-        size_t popcount[2] = {
-            copy_bits_count(bv, this->beta),
-            copy_bits_count(bv, other->beta, this->beta.size())
-        };
+        size_t popcount[2];
+        popcount[0] = 0;
+        auto end = bv.data() + (bv.capacity() >> 6);
+        for (auto it = bv.data(); it != end; ++it) {
+            popcount[0] += __builtin_popcountl(*it);
+        }
+        popcount[1] = copy_bits_count(bv, other->beta, this->beta.size()); //TODO: slow
         
 
 #ifdef DBGDEBUG
