@@ -16,7 +16,7 @@
 #include<parallel/algorithm>
 //#include "array_int.hpp"
 #define MAXNUM (std::numeric_limits<std::uint16_t>::max())
-#define TASKMIN 100
+#define TASKMIN 50
 
 #include <boost/multiprecision/cpp_int.hpp>
 #include <boost/multiprecision/gmp.hpp>
@@ -213,7 +213,9 @@ namespace WaveletTrie {
         } else {
             size = std::max(msb, length);
         }
-        bv_t bv(size);
+        //bv_t bv(size);
+        bv_t bv;
+        bv.resize(size);
         size_t size_64 = bv.capacity() >> 6;
         mpz_export(bv.data(), &size_64, -1, 8, 0, 0, data);
         return bv;
@@ -291,9 +293,12 @@ namespace WaveletTrie {
         //}
         //sdsl::sd_vector<> sd(bv);
         beta_t sd(bv);
+        //sdsl::rrr_vector<> sd(bv);
         //oa & this->alpha;
         sd.serialize(os);
-        this->beta.serialize(oas);
+        sdsl::sd_vector<> sdb(this->beta);
+        sdb.serialize(oas);
+        //this->beta.serialize(oas);
         //this->rank1.serialize(oas);
         //this->rank0.serialize(oas);
     }
@@ -375,6 +380,7 @@ namespace WaveletTrie {
             if (cur->child[1] != NULL)
                 node_stack.push(cur->child[1]);
         }
+        //TODO: optimize
         std::cout << asize << "\t" << bsize << "\n";
         bv_t bv_alpha(asize);
         bv_t bv_beta(bsize);
@@ -438,6 +444,8 @@ namespace WaveletTrie {
         size_t newlength;
         mpz_t temp2;
         mpz_init(temp2);
+
+        //lower-level
         size_t size[2] = {
             mpz_size(temp),
             mpz_size(pref)
@@ -454,28 +462,22 @@ namespace WaveletTrie {
             ++ptrs[0];
             ++ptrs[1];
             if (!mpn_zero_p(nptr, 1)) {
+                newlength = i * 8 + mpn_scan1(nptr, 0);
                 break;
             }
         }
         if (i == sizemin) {
             if (size[0] <= size[1]) {
-                newlength = i * 8 + mpz_scan1(pref, sizemin * 8);
+                newlength = sizemin * 8 + mpz_scan1(pref, sizemin * 8);
             } else {
-                newlength = i * 8 + mpz_scan1(temp, sizemin * 8);
+                newlength = sizemin * 8 + mpz_scan1(temp, sizemin * 8);
             }
-        } else {
-            newlength = i * 8 + mpn_scan1(nptr, 0);
         }
 
         //reference
         /*
         mpz_xor(temp2, temp, pref);
-        size_t nnewlength = mpz_scan1(temp2, 0);
-        if (nnewlength != newlength) {
-            std::cerr << nnewlength << " " << newlength << "\n";
-            std::cerr << i << " " << sizemin << "\n";
-            assert(false);
-        }
+        newlength = mpz_scan1(temp2, 0);
         */
         mpz_clear(temp2);
         return newlength;
@@ -515,7 +517,7 @@ namespace WaveletTrie {
 
     }
 
-    void update_pref_(mpz_t &pref, mpz_t &temp, bool &set, annot_t &prefix, size_t &length) {
+    void update_pref_(mpz_t &pref, mpz_t &temp, bool &set, annot_t &prefix, size_t &length, size_t&& start=0) {
         if (mpz_cmp(temp, pref) != 0) {
             if (!set) {
                 prefix = temp;
@@ -540,7 +542,11 @@ namespace WaveletTrie {
         auto begin = std::get<1>(curnode).first;
         split = begin;
         std::vector<cpp_int> right_children;
+        //std::vector<intvec_t::iterator> ind(std::get<1>(curnode).second - std::get<1>(curnode).first);
+        //auto jt = ind.begin();
         for (auto it = begin; it != std::get<1>(curnode).second; ++it) {
+            //*jt = it;
+            //++jt;
             mpz_t& old = it->backend().data();
             curbit = mpz_tstbit(old, length);
             mpz_t& pref = prefices[curbit].backend().data();
@@ -560,6 +566,17 @@ namespace WaveletTrie {
         bv_t bv = copy_bits(bv_mpz, std::get<1>(curnode).second - begin);
         mpz_clear(bv_mpz);
         std::swap_ranges(right_children.begin(), right_children.end(), split);
+        /*
+        std::random_shuffle(ind.begin(), ind.end());
+        for (auto it = ind.begin(); it != ind.end(); ++it) {
+            mpz_t& cur = (*it)->backend().data();
+            curbit = mpz_tstbit(cur, 0);
+            mpz_t& pref = prefices[curbit].backend().data();
+            if (lengths[curbit] > 0) {
+                update_pref_(pref, cur, set[curbit], prefices[curbit], lengths[curbit]);
+            }
+        }
+        */
         return bv;
     }
 
