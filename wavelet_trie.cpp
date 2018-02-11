@@ -369,7 +369,7 @@ namespace annotate {
         if (lrank) {
             jnode = child_[0];
             while (jnode && lrank > jnode->size()) {
-                jnode->move_label_down_(0);
+                jnode->move_label_down_(lsb(jnode->alpha_));
                 jnode->set_beta_(insert_zeros(jnode->beta_, lrank - jnode->size(), rightside ? jnode->size() : 0));
                 assert(jnode->popcount == jnode->rank1(jnode->size()));
                 lrank -= jnode->popcount;
