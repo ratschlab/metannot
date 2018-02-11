@@ -551,16 +551,18 @@ namespace annotate {
     template <class Iterator>
     size_t WaveletTrie::Node::next_different_bit_(const Iterator &a, const Iterator &b,
             const size_t col, size_t next_col) {
-        size_t i = next_bit(*a, col);
-        size_t j = next_bit(*b, col);
-        while (i == j && i < next_col && j < next_col) {
-            i = next_bit(*a, i + 1);
-            j = next_bit(*b, j + 1);
+        if (col == next_col)
+            return next_col;
+        size_t ranges[3] = {next_bit(*a, col), next_bit(*b, col), next_col};
+        while (ranges[0] == ranges[1] && ranges[0] < ranges[2] && ranges[1] < ranges[2]) {
+            ranges[0] = next_bit(*a, ranges[0] + 1);
+            ranges[1] = next_bit(*b, ranges[1] + 1);
         }
-        if (i != j && (i < next_col || j < next_col)) {
-            next_col = std::min(i, j);
+        next_col = std::min(ranges[0], ranges[1]);
+        if (ranges[0] != ranges[1] && next_col < ranges[2]) {
+            return next_col;
         }
-        return next_col;
+        return ranges[2];
     }
 
     size_t WaveletTrie::Node::next_different_bit_alpha(Node *curnode, Node *othnode) {
@@ -577,10 +579,11 @@ namespace annotate {
             if (ranges[3] < -1llu)
                 ranges[1] = ranges[3];
         }
+        ranges[1] = std::min(ranges[0], ranges[1]);
         if (!curnode->all_zero || !othnode->all_zero) {
-            return *(std::min_element(ranges, ranges + 4));
+            return *(std::min_element(ranges + 1, ranges + 4));
         }
-        return std::min(ranges[0], ranges[1]);
+        return ranges[1];
     }
 
     template <class Iterator>
