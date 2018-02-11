@@ -45,12 +45,20 @@ namespace annotate {
 
     size_t msb(const cpp_int &a) {
         assert(a != 0);
-        return boost::multiprecision::msb(a);
+        const mpz_t& a_mpz = a.backend().data();
+        size_t i = mpz_scan1(a_mpz, 0);
+        do {
+            size_t j = mpz_scan1(a_mpz, i + 1);
+            if (j == -1llu)
+                break;
+            i = j;
+        } while (true);
+        return i;
     }
 
     size_t lsb(const cpp_int &a) {
         assert(a != 0);
-        return boost::multiprecision::lsb(a);
+        return next_bit(a, 0);
     }
 
     //TODO: align get_int to blocks in source
@@ -63,6 +71,7 @@ namespace annotate {
         }
         bv_t merged;
         size_t j;
+        //assume limb size of 64
         if (i) {
             merged = target;
             merged.resize(target.size() + count);
@@ -74,7 +83,6 @@ namespace annotate {
             if (count - j)
                 merged.set_int(i + j, 0, count - j);
             */
-            //assume limb size of 64
             j = ((i + 63) & -64llu);
             //WARNING: the region from merged.size() to j is not initialized
             merged.set_int(i, 0, std::min(j, merged.size()) - i);
@@ -376,6 +384,33 @@ namespace annotate {
         }
     }
 
+    void WaveletTrie::Node::fill_ancestors(Node *othnode, bool ind, const size_t i) {
+        if (child_[ind]) {
+            if (!othnode->child_[ind] && !ind) {
+                //TODO: fix position when i != size()
+                fill_left(true);
+            }
+        } else {
+            assert(child_[!ind] || all_zero);
+            if (othnode->child_[ind]) {
+                std::swap(child_[ind], othnode->child_[ind]);
+                all_zero = othnode->all_zero;
+                if (!ind) {
+                    //TODO: correct position when i != size() ?
+                    fill_left(false);
+                }
+                assert(!all_zero);
+            } else if (!ind) {
+                size_t lrank = size() - popcount;
+                assert(lrank == rank0(size()));
+                if (lrank) {
+                    all_zero = false;
+                    child_[ind] = new Node(lrank);
+                }
+            }
+        }
+    }
+
     template <class Container>
     void WaveletTrie::Node::push_child(Container &nodes, Node *curnode, Node *othnode, bool ind, const size_t i
 #ifndef NPRINT
@@ -401,27 +436,6 @@ namespace annotate {
                         , path
 #endif
                 );
-            } else if (!ind) {
-                //TODO: fix position when i != size()
-                curnode->fill_left(true);
-            }
-        } else {
-            assert(curnode->child_[!ind] || curnode->all_zero);
-            if (othnode->child_[ind]) {
-                std::swap(curnode->child_[ind], othnode->child_[ind]);
-                curnode->all_zero = othnode->all_zero;
-                if (!ind) {
-                    //TODO: correct position when i != size() ?
-                    curnode->fill_left(false);
-                }
-                assert(!curnode->all_zero);
-            } else if (!ind) {
-                size_t lrank = curnode->size() - curnode->popcount;
-                assert(lrank == curnode->rank0(curnode->size()));
-                if (lrank) {
-                    curnode->all_zero = false;
-                    curnode->child_[ind] = new Node(lrank);
-                }
             }
         }
     }
@@ -511,6 +525,8 @@ namespace annotate {
                     , path + std::string("R")
 #endif
             );
+            curnode->fill_ancestors(othnode, 0, il);
+            curnode->fill_ancestors(othnode, 1, ir);
         }
     }
 

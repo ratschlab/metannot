@@ -148,6 +148,8 @@ namespace annotate {
 
             static void merge_beta_(Node *curnode, Node *othnode, size_t i = -1llu);
 
+            void fill_ancestors(Node *othnode, bool ind, const size_t i);
+
             bool is_leaf();
 
             template <class Container>
