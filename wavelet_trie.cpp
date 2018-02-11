@@ -411,35 +411,6 @@ namespace annotate {
         }
     }
 
-    template <class Container>
-    void WaveletTrie::Node::push_child(Container &nodes, Node *curnode, Node *othnode, bool ind, const size_t i
-#ifndef NPRINT
-            , std::string path
-#endif
-            ) {
-        if (curnode->child_[ind]) {
-            assert(!curnode->all_zero);
-            if (othnode->child_[ind]) {
-                assert(i <= curnode->child_[ind]->size());
-#ifndef NDEBUG
-                if (!ind)
-                    assert(curnode->rank0(curnode->size())
-                        == curnode->child_[ind]->size() + othnode->child_[ind]->size()
-                    );
-                else
-                    assert(curnode->rank1(curnode->size())
-                        == curnode->child_[ind]->size() + othnode->child_[ind]->size()
-                    );
-#endif
-                nodes.emplace(curnode->child_[ind], othnode->child_[ind], i
-#ifndef NPRINT
-                        , path
-#endif
-                );
-            }
-        }
-    }
-
     void WaveletTrie::insert(WaveletTrie&& wtr, size_t i) {
         if (!wtr.root) {
             return;
@@ -449,47 +420,24 @@ namespace annotate {
             return;
         }
         assert(root && wtr.root);
+#pragma omp parallel
+#pragma omp single nowait
+        Node::merge(root, wtr.root, i);
+    }
+
+    void WaveletTrie::Node::merge(Node *curnode, Node *othnode, size_t i) {
         if (i == -1llu) {
-            i = size();
+            i = curnode->size();
         }
-        assert(i <= size());
 
-        assert(root->size());
-        assert(wtr.root->size());
 
-        struct node_state {
-            node_state(Node *first, Node *second, size_t i
-#ifndef NPRINT
-                    , std::string path
-#endif
-                )
-                : first(first), second(second), i(i)
-#ifndef NPRINT
-                  , path(path)
-#endif
-                { }
-            Node *first, *second;
-            size_t i;
-#ifndef NPRINT
-            std::string path;
-#endif
-        };
-        std::stack<node_state> nodes;
-        nodes.emplace(root, wtr.root, i
-#ifndef NPRINT
-                , std::string("")
-#endif
-        );
-        while (nodes.size()) {
-            Node *curnode = nodes.top().first;
-            Node *othnode = nodes.top().second;
-            i = nodes.top().i;
-#ifndef NPRINT
-            std::string path = nodes.top().path;
-#endif
-            nodes.pop();
+        assert(curnode->size());
+        assert(othnode->size());
+        assert(i <= curnode->size());
 
-            assert(curnode && othnode);
+        while (curnode && othnode) {
+
+            //assert(curnode && othnode);
             assert(curnode->size());
             assert(i <= curnode->size());
             assert(curnode->check(0));
@@ -515,26 +463,35 @@ namespace annotate {
             std::cout << curnode->alpha_ << ":" << curnode->beta_ << ";" << curnode->all_zero << "\t"
                       << othnode->alpha_ << ":" << othnode->beta_ << ";" << othnode->all_zero << "\n";
 #endif
-            Node::push_child(nodes, curnode, othnode, 0, il
-#ifndef NPRINT
-                    , path + std::string("L")
-#endif
-            );
-            Node::push_child(nodes, curnode, othnode, 1, ir
-#ifndef NPRINT
-                    , path + std::string("R")
-#endif
-            );
+            bool left  = curnode->child_[0] && othnode->child_[0];
+            bool right = curnode->child_[1] && othnode->child_[1];
             curnode->fill_ancestors(othnode, 0, il);
             curnode->fill_ancestors(othnode, 1, ir);
+            if (left) {
+                assert(!curnode->all_zero);
+                assert(il <= curnode->child_[0]->size());
+                assert(curnode->size() - curnode->popcount 
+                        == curnode->child_[0]->size() + othnode->child_[0]->size()
+                );
+#pragma omp task if (curnode->child_[0]->size() > 128)
+                Node::merge(curnode->child_[0], othnode->child_[0], il);
+            }
+            if (right) {
+                assert(!curnode->all_zero);
+                assert(ir <= curnode->child_[0]->size());
+                assert(curnode->popcount == curnode->child_[1]->size() + othnode->child_[1]->size());
+                curnode = curnode->child_[1];
+                othnode = othnode->child_[1];
+                i = ir;
+            } else {
+                curnode = NULL;
+                othnode = NULL;
+            }
         }
     }
 
     template <typename T>
     void WaveletTrie::insert(const T &a, size_t i) {
-        if (i == -1llu) {
-            i = size();
-        }
         Node *next = new Node(&a, &a + 1, 0);
         if (!i) {
             root = next;

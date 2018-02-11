@@ -117,6 +117,8 @@ namespace annotate {
 
             size_t rank0(const size_t i);
 
+            static void merge(Node *curnode, Node *othnode, size_t i = -1llu);
+
         protected:
             alpha_t alpha_ = 1;
             beta_t beta_;

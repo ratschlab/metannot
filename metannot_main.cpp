@@ -50,7 +50,7 @@ int main(int argc, char** argv) {
                 wtr->insert(annotate::WaveletTrie(it, it + step));
             }
             std::cout << "." << std::flush;
-            if (static_cast<uint64_t>(it - nums.begin()) / step % 100 == 0) {
+            if (it != nums.begin() && (static_cast<uint64_t>(it - nums.begin()) / step % 100 == 0)) {
                 std::cout << std::endl;
             }
         }
