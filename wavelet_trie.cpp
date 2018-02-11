@@ -53,6 +53,7 @@ namespace annotate {
         return boost::multiprecision::lsb(a);
     }
 
+    //TODO: align get_int to blocks in source
     template <typename Vector>
     bv_t insert_zeros(const Vector &target, const size_t count, const size_t i) {
         if (!count)
@@ -65,12 +66,19 @@ namespace annotate {
         if (i) {
             merged = target;
             merged.resize(target.size() + count);
+            /*
             j = 0;
             for (; j + 64 <= count; j += 64) {
                 merged.set_int(i + j, 0);
             }
             if (count - j)
                 merged.set_int(i + j, 0, count - j);
+            */
+            //assume limb size of 64
+            j = ((i + 63) & -64llu);
+            //WARNING: the region from merged.size() to j is not initialized
+            merged.set_int(i, 0, std::min(j, merged.size()) - i);
+            std::fill(merged.data() + (j >> 6), merged.data() + (merged.capacity() >> 6), 0);
         } else {
             merged = bv_t(count);
             merged.resize(target.size() + count);
@@ -403,7 +411,7 @@ namespace annotate {
                 std::swap(curnode->child_[ind], othnode->child_[ind]);
                 curnode->all_zero = othnode->all_zero;
                 if (!ind) {
-                    //TODO: correct position?
+                    //TODO: correct position when i != size() ?
                     curnode->fill_left(false);
                 }
                 assert(!curnode->all_zero);
