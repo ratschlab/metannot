@@ -470,10 +470,10 @@ namespace annotate {
             if (left) {
                 assert(!curnode->all_zero);
                 assert(il <= curnode->child_[0]->size());
-                assert(curnode->size() - curnode->popcount 
+                assert(curnode->size() - curnode->popcount
                         == curnode->child_[0]->size() + othnode->child_[0]->size()
                 );
-#pragma omp task if (curnode->child_[0]->size() > 128)
+#pragma omp task if (curnode->child_[0]->size() > 32)
                 Node::merge(curnode->child_[0], othnode->child_[0], il);
             }
             if (right) {
@@ -519,12 +519,7 @@ namespace annotate {
         if (curnode->alpha_ == othnode->alpha_) {
             return false;
         }
-        size_t common_pref = next_different_bit_alpha(curnode->alpha_, othnode->alpha_);
-        if (!curnode->all_zero || !othnode->all_zero) {
-            size_t curmsb = msb(curnode->alpha_);
-            size_t othmsb = msb(othnode->alpha_);
-            common_pref = std::min(common_pref, std::min(curmsb, othmsb));
-        }
+        size_t common_pref = next_different_bit_alpha(curnode, othnode);
 #ifndef NPRINT
         std::cout << common_pref << "\t";
 #endif
@@ -568,12 +563,24 @@ namespace annotate {
         return next_col;
     }
 
-    size_t WaveletTrie::Node::next_different_bit_alpha(cpp_int a, cpp_int b) {
-        assert(a != 0);
-        assert(b != 0);
-        bit_unset(a, msb(a));
-        bit_unset(b, msb(b));
-        return next_different_bit_(&a, &b);
+    size_t WaveletTrie::Node::next_different_bit_alpha(Node *curnode, Node *othnode) {
+        assert(curnode->alpha_ != 0);
+        assert(othnode->alpha_ != 0);
+        mpz_t& cur = curnode->alpha_.backend().data();
+        mpz_t& oth = othnode->alpha_.backend().data();
+        size_t ranges[4] = {next_bit(cur, 0), next_bit(oth, 0), 0, 0};
+        while (ranges[2] == ranges[3] && ranges[2] < -1llu && ranges[3] < -1llu) {
+            ranges[2] = next_bit(ranges[2], ranges[0] + 1);
+            ranges[3] = next_bit(ranges[3], ranges[1] + 1);
+            if (ranges[2] < -1llu)
+                ranges[0] = ranges[2];
+            if (ranges[3] < -1llu)
+                ranges[1] = ranges[3];
+        }
+        if (!curnode->all_zero || !othnode->all_zero) {
+            return *(std::min_element(ranges, ranges + 4));
+        }
+        return std::min(ranges[0], ranges[1]);
     }
 
     template <class Iterator>

@@ -135,7 +135,7 @@ namespace annotate {
             static size_t next_different_bit_(const Iterator &a, const Iterator &b,
                     const size_t col = 0, size_t next_col = -1llu);
 
-            static size_t next_different_bit_alpha(cpp_int a, cpp_int b);
+            static size_t next_different_bit_alpha(Node *curnode, Node *othnode);
 
             template <class Iterator>
             static Prefix longest_common_prefix(

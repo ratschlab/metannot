@@ -1,4 +1,4 @@
-CXX=g++ -std=c++14 -fopenmp -g -pg -march=native -O2 -DNPRINT -DNDEBUG -O3
+CXX=g++ -std=c++14 -fopenmp -g -pg -march=native -O2 -DNPRINT -DNDEBUG #-O3
 HOME=/cluster/home/hmustafa
 CXXFLAGS=-Wall -I$(HOME)/local/include -L$(HOME)/local/lib
 LDFLAGS=-lsdsl -lboost_serialization -lpthread -lgmp
