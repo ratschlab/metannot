@@ -12,12 +12,21 @@ int main(int argc, char** argv) {
     assert(argc > 1);
     std::string line, digit;
     std::vector<cpp_int> nums_ref;
+
+    //environment variable arguments
     const char *test = std::getenv("TEST");
+    const char *njobs = std::getenv("NJOBS");
+    size_t n_jobs = 1;
+    if (njobs) {
+        n_jobs = atoi(njobs);
+        omp_set_num_threads(n_jobs);
+    }
+
     annotate::WaveletTrie *wtr = NULL;
     for (int f = 1; f < argc; ++f) {
         std::vector<cpp_int> nums;
         std::ifstream fin(argv[f]);
-    
+
         std::cout << "Reading " << f << std::endl;
         while (std::getline(fin, line)) {
             std::istringstream sin(line);
@@ -29,7 +38,7 @@ int main(int argc, char** argv) {
         fin.close();
         nums_ref.reserve(nums_ref.size() + nums.size());
         nums_ref.insert(nums_ref.end(), nums.begin(), nums.end());
-    
+
         std::cout << "Compressing\n";
         const char *step_char = std::getenv("STEP");
         size_t step = step_char ? atoi(step_char) : nums.size();

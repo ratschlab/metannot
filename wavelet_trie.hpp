@@ -42,7 +42,10 @@ namespace annotate {
     size_t lsb(const cpp_int &a);
 
     template <typename Vector>
-    bv_t insert_range(const Vector &target, const Vector &source, size_t i = 0);
+    bv_t insert_zeors(const Vector &target, const size_t count = 0, const size_t i = 0);
+
+    template <typename Vector>
+    bv_t insert_range(const Vector &target, const Vector &source, const size_t i = 0);
 
     class Prefix {
         public:
@@ -95,8 +98,6 @@ namespace annotate {
             //Copy constructor
             Node(const Node &that);
 
-            //size_t count() { return 0; }
-
             //Constructor from array
             //col is number of bits to trim off left
             template <class Iterator>
@@ -112,6 +113,10 @@ namespace annotate {
 
             bool check(bool ind);
 
+            size_t rank1(const size_t i);
+
+            size_t rank0(const size_t i);
+
         protected:
             alpha_t alpha_ = 1;
             beta_t beta_;
@@ -120,6 +125,7 @@ namespace annotate {
             Node *child_[2] = {NULL, NULL};
             bool all_zero = false;
             size_t popcount = 0;
+            bool support = false;
 
         private:
 
@@ -145,7 +151,14 @@ namespace annotate {
             bool is_leaf();
 
             template <class Container>
-            static void push_child(Container &nodes, Node *curnode, Node *othnode, bool ind, const size_t i, std::string path);
+            static void push_child(
+                    Container &nodes,
+                    Node *curnode, Node *othnode,
+                    bool ind, const size_t i
+#ifndef NPRINT
+                    , std::string path
+#endif
+            );
 
     };
 

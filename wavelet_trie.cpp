@@ -54,22 +54,62 @@ namespace annotate {
     }
 
     template <typename Vector>
-    bv_t insert_range(const Vector &target, const Vector &source, size_t i) {
+    bv_t insert_zeros(const Vector &target, const size_t count, const size_t i) {
+        if (!count)
+            return target;
+        if (!target.size()) {
+            return bv_t(count);
+        }
+        bv_t merged;
+        size_t j;
+        if (i) {
+            merged = target;
+            merged.resize(target.size() + count);
+            j = 0;
+            for (; j + 64 <= count; j += 64) {
+                merged.set_int(i + j, 0);
+            }
+            if (count - j)
+                merged.set_int(i + j, 0, count - j);
+        } else {
+            merged = bv_t(count);
+            merged.resize(target.size() + count);
+        }
+        j = i;
+        for (; j + 64 <= target.size(); j += 64) {
+            merged.set_int(count + j, target.get_int(j));
+        }
+        if (target.size() - j)
+            merged.set_int(count + j, target.get_int(j, target.size() - j), target.size() - j);
+        return merged;
+    }
+
+    template <typename Vector>
+    bv_t insert_range(const Vector &target, const Vector &source, const size_t i) {
         if (!target.size()) {
             assert(i == 0);
             return source;
         }
         if (!source.size())
             return target;
-        
-        bv_t merged(target);
-        merged.resize(target.size() + source.size());
-        size_t j = 0;
-        for (; j + 64 <= source.size(); j += 64) {
-            merged.set_int(i + j, source.get_int(j));
+
+        bv_t merged;
+        size_t j;
+        if (i) {
+            merged = target;
+            merged.resize(target.size() + source.size());
+            j = 0;
+            for (; j + 64 <= source.size(); j += 64) {
+                merged.set_int(i + j, source.get_int(j));
+            }
+            if (source.size() - j)
+                merged.set_int(i + j, source.get_int(j, source.size() - j), source.size() - j);
+        } else {
+            merged = source;
+            merged.resize(target.size() + source.size());
         }
-        merged.set_int(i + j, source.get_int(j, source.size() - j), source.size() - j);
-        for (j = i; j + 64 <= target.size(); j+= 64) {
+        j = i;
+        for (; j + 64 <= target.size(); j += 64) {
             merged.set_int(source.size() + j, target.get_int(j));
         }
         if (target.size() - j)
@@ -111,7 +151,8 @@ namespace annotate {
         : alpha_(that.alpha_), beta_(that.beta_),
           rank1_(that.rank1_), rank0_(that.rank0_),
           all_zero(that.all_zero),
-          popcount(that.popcount) {
+          popcount(that.popcount),
+          support(that.support) {
         if (that.child_[0]) {
             child_[0] = new Node(*that.child_[0]);
         }
@@ -159,7 +200,7 @@ namespace annotate {
                 }
             }
             set_beta_(beta);
-            assert(popcount == rank1_(size()));
+            assert(popcount == rank1(size()));
             //distribute to left and right children
             assert(split != row_begin && split != row_end);
             std::swap_ranges(right_children.begin(), right_children.end(), split);
@@ -168,7 +209,7 @@ namespace annotate {
             if (prefices[0].col != -1llu) {
                 prefices[0].allequal = false;
                 child_[0] = new Node(row_begin, split, col_end + 1, prefices[0]);
-                assert(child_[0]->size() == rank0_(beta.size()));
+                assert(child_[0]->size() == rank0(beta.size()));
             } else {
                 cpp_int new_alpha = *row_begin;
                 mpz_t& alph = new_alpha.backend().data();
@@ -178,14 +219,15 @@ namespace annotate {
                 } else {
                     bit_set(new_alpha, 0);
                 }
+#pragma omp task
                 child_[0] = new Node(new_alpha, split - row_begin);
-                assert(child_[0]->size() == rank0_(beta.size()));
+                //assert(child_[0]->size() == rank0(beta.size()));
             }
 
             if (prefices[1].col != -1llu) {
                 prefices[1].allequal = false;
                 child_[1] = new Node(split, row_end, col_end + 1, prefices[1]);
-                assert(child_[1]->size() == rank1_(beta.size()));
+                assert(child_[1]->size() == rank1(beta.size()));
             } else {
                 cpp_int new_alpha = *split;
                 mpz_t& alph = new_alpha.backend().data();
@@ -195,8 +237,9 @@ namespace annotate {
                 } else {
                     bit_set(new_alpha, 0);
                 }
+#pragma omp task
                 child_[1] = new Node(new_alpha, row_end - split);
-                assert(child_[1]->size() == rank1_(beta.size()));
+                //assert(child_[1]->size() == rank1(beta.size()));
             }
         }
     }
@@ -208,6 +251,7 @@ namespace annotate {
         this->popcount = that.popcount;
         this->rank1_ = that.rank1_;
         this->rank0_ = that.rank0_;
+        this->support = that.support;
         this->child_[0] = that.child_[0];
         this->child_[1] = that.child_[1];
         that.child_[0] = NULL;
@@ -237,6 +281,8 @@ namespace annotate {
                 }
                 root = new Node(alpha, row_end - row_begin);
             } else {
+#pragma omp parallel
+#pragma omp single nowait
                 root = new Node(row_begin, row_end, 0, prefix);
             }
         } else {
@@ -262,12 +308,12 @@ namespace annotate {
             length += msb(node->alpha_) + 1;
             if (node->beta_[i]) {
                 assert(node->child_[1]);
-                i = node->rank1_(i);
+                i = node->rank1(i);
                 node = node->child_[1];
             } else {
                 bit_unset(annot, length - 1);
                 assert(node->child_[0]);
-                i = node->rank0_(i);
+                i = node->rank0(i);
                 node = node->child_[0];
             }
         }
@@ -286,7 +332,7 @@ namespace annotate {
 
     bool WaveletTrie::Node::check(bool ind) {
         size_t rank = ind ? popcount : size() - popcount;
-        assert(rank1_(size()) == popcount);
+        assert(rank1(size()) == popcount);
         if (child_[ind]) {
             if (all_zero)
                 return false;
@@ -302,20 +348,14 @@ namespace annotate {
 
     void WaveletTrie::Node::fill_left(bool rightside) {
         size_t lrank = size() - popcount;
-        assert(lrank == rank0_(size()));
+        assert(lrank == rank0(size()));
         Node *jnode = NULL;
         if (lrank) {
             jnode = child_[0];
             while (jnode && lrank > jnode->size()) {
                 jnode->move_label_down_(0);
-                jnode->set_beta_(
-                        insert_range(
-                            jnode->beta_,
-                            bv_t(lrank - jnode->size()),
-                            rightside ? jnode->size() : 0
-                        )
-                );
-                assert(jnode->popcount == jnode->rank1_(jnode->size()));
+                jnode->set_beta_(insert_zeros(jnode->beta_, lrank - jnode->size(), rightside ? jnode->size() : 0));
+                assert(jnode->popcount == jnode->rank1(jnode->size()));
                 lrank -= jnode->popcount;
                 if (!jnode->child_[0] && lrank) {
                     jnode->all_zero = false;
@@ -329,22 +369,30 @@ namespace annotate {
     }
 
     template <class Container>
-    void WaveletTrie::Node::push_child(Container &nodes, Node *curnode, Node *othnode, bool ind, const size_t i, std::string path) {
+    void WaveletTrie::Node::push_child(Container &nodes, Node *curnode, Node *othnode, bool ind, const size_t i
+#ifndef NPRINT
+            , std::string path
+#endif
+            ) {
         if (curnode->child_[ind]) {
             assert(!curnode->all_zero);
             if (othnode->child_[ind]) {
                 assert(i <= curnode->child_[ind]->size());
 #ifndef NDEBUG
                 if (!ind)
-                    assert(curnode->rank0_(curnode->size())
+                    assert(curnode->rank0(curnode->size())
                         == curnode->child_[ind]->size() + othnode->child_[ind]->size()
                     );
                 else
-                    assert(curnode->rank1_(curnode->size())
+                    assert(curnode->rank1(curnode->size())
                         == curnode->child_[ind]->size() + othnode->child_[ind]->size()
                     );
 #endif
-                nodes.emplace(curnode->child_[ind], othnode->child_[ind], i, path);
+                nodes.emplace(curnode->child_[ind], othnode->child_[ind], i
+#ifndef NPRINT
+                        , path
+#endif
+                );
             } else if (!ind) {
                 //TODO: fix position when i != size()
                 curnode->fill_left(true);
@@ -361,7 +409,7 @@ namespace annotate {
                 assert(!curnode->all_zero);
             } else if (!ind) {
                 size_t lrank = curnode->size() - curnode->popcount;
-                assert(lrank == curnode->rank0_(curnode->size()));
+                assert(lrank == curnode->rank0(curnode->size()));
                 if (lrank) {
                     curnode->all_zero = false;
                     curnode->child_[ind] = new Node(lrank);
@@ -388,18 +436,35 @@ namespace annotate {
         assert(wtr.root->size());
 
         struct node_state {
-            node_state(Node *first, Node *second, size_t i, std::string path) : first(first), second(second), i(i), path(path) { }
+            node_state(Node *first, Node *second, size_t i
+#ifndef NPRINT
+                    , std::string path
+#endif
+                )
+                : first(first), second(second), i(i)
+#ifndef NPRINT
+                  , path(path)
+#endif
+                { }
             Node *first, *second;
             size_t i;
+#ifndef NPRINT
             std::string path;
+#endif
         };
         std::stack<node_state> nodes;
-        nodes.emplace(root, wtr.root, i, std::string(""));
+        nodes.emplace(root, wtr.root, i
+#ifndef NPRINT
+                , std::string("")
+#endif
+        );
         while (nodes.size()) {
             Node *curnode = nodes.top().first;
             Node *othnode = nodes.top().second;
             i = nodes.top().i;
+#ifndef NPRINT
             std::string path = nodes.top().path;
+#endif
             nodes.pop();
 
             assert(curnode && othnode);
@@ -408,23 +473,36 @@ namespace annotate {
             assert(curnode->check(0));
             assert(curnode->check(1));
 #ifndef NPRINT
-            std::cout << path << "\t" << i << "\t" << curnode->alpha_ << ":" << curnode->beta_ << ";" << curnode->all_zero << "\t"
-                                   << othnode->alpha_ << ":" << othnode->beta_ << ";" << othnode->all_zero << "\t->\t";
+            std::cout << path << "\t" << i << "\t"
+                      << curnode->alpha_ << ":" << curnode->beta_ << ";" << curnode->all_zero << "\t"
+                      << othnode->alpha_ << ":" << othnode->beta_ << ";" << othnode->all_zero << "\t->\t";
 #endif
 
             Node::overlap_prefix_(curnode, othnode);
 
             //update insertion point and merge betas
-            size_t il = curnode->rank0_(i);
-            size_t ir = curnode->rank1_(i);
+            size_t il = i == curnode->size()
+                ? curnode->size() - curnode->popcount
+                : curnode->rank0(i);
+            size_t ir = i == curnode->size()
+                ? curnode->popcount
+                : curnode->rank1(i);
             Node::merge_beta_(curnode, othnode, i);
 
 #ifndef NPRINT
             std::cout << curnode->alpha_ << ":" << curnode->beta_ << ";" << curnode->all_zero << "\t"
                       << othnode->alpha_ << ":" << othnode->beta_ << ";" << othnode->all_zero << "\n";
 #endif
-            Node::push_child(nodes, curnode, othnode, 0, il, path + std::string("L"));
-            Node::push_child(nodes, curnode, othnode, 1, ir, path + std::string("R"));
+            Node::push_child(nodes, curnode, othnode, 0, il
+#ifndef NPRINT
+                    , path + std::string("L")
+#endif
+            );
+            Node::push_child(nodes, curnode, othnode, 1, ir
+#ifndef NPRINT
+                    , path + std::string("R")
+#endif
+            );
         }
     }
 
@@ -579,7 +657,7 @@ namespace annotate {
                 popcount = 0;
                 assert(beta_.size() == child_[0]->size());
             }
-            assert(popcount == rank1_(size()));
+            assert(popcount == rank1(size()));
             assert(msb(alpha_) == length);
             assert((child_[0] == NULL) ^ (child_[1] == NULL));
         }
@@ -626,15 +704,31 @@ namespace annotate {
 #endif
         curnode->set_beta_(beta_new);
         curnode->popcount += othnode->popcount;
-        assert(curnode->popcount == curnode->rank1_(curnode->size()));
+        assert(curnode->popcount == curnode->rank1(curnode->size()));
     }
 
     template <class Vector>
     void WaveletTrie::Node::set_beta_(const Vector &bv) {
         assert(bv.size());
         beta_ = beta_t(bv);
-        sdsl::util::init_support(rank1_, &beta_);
-        sdsl::util::init_support(rank0_, &beta_);
+    }
+
+    size_t WaveletTrie::Node::rank0(const size_t i) {
+        if (!support) {
+            sdsl::util::init_support(rank1_, &beta_);
+            sdsl::util::init_support(rank0_, &beta_);
+            support = true;
+        }
+        return rank0_(i);
+    }
+
+    size_t WaveletTrie::Node::rank1(const size_t i) {
+        if (!support) {
+            sdsl::util::init_support(rank1_, &beta_);
+            sdsl::util::init_support(rank0_, &beta_);
+            support = true;
+        }
+        return rank1_(i);
     }
 
     template WaveletTrie::WaveletTrie(std::vector<cpp_int>::iterator, std::vector<cpp_int>::iterator);
