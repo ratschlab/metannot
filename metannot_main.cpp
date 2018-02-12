@@ -23,7 +23,7 @@ int main(int argc, char** argv) {
     }
 
     annotate::WaveletTrie *wtr = NULL;
-    for (int f = 1; f < argc; ++f) {
+    for (int f = 1; f < argc - 1; ++f) {
         std::vector<cpp_int> nums;
         std::ifstream fin(argv[f]);
 
@@ -79,8 +79,12 @@ int main(int argc, char** argv) {
             }
         }
     }
-    if (wtr)
+    if (wtr) {
+        std::cout << "Serializing\n";
+        std::ofstream fout(argv[argc - 1]);
+        wtr->serialize(fout);
         delete wtr;
+    }
     std::cout << "Done\n";
     return 0;
 }

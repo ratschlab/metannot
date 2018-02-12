@@ -76,9 +76,10 @@ namespace annotate {
             template <typename T>
             void insert(const T &a, size_t i = -1llu);
 
+            void serialize(std::ostream &out) const;
+
         private:
             class Node;
-            class Leaf;
             Node* root;
     };
 
@@ -106,6 +107,8 @@ namespace annotate {
 
             //swap
             void swap(Node&& that);
+            
+            void serialize(std::ostream &out) const;
 
             size_t size() { return beta_.size(); }
 

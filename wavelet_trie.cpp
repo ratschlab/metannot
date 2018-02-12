@@ -148,6 +148,36 @@ namespace annotate {
 
     WaveletTrie::WaveletTrie() : root(NULL) { }
 
+    void WaveletTrie::serialize(std::ostream &out) const {
+        root->serialize(out);
+    }
+
+    void WaveletTrie::Node::serialize(std::ostream &out) const {
+        //serialize alpha
+        size_t a;
+        void *alpha_raw = mpz_export(NULL, &a, 1, 1, 0, 0, alpha_.backend().data());
+        out.write((char*)&a, sizeof(a));
+        out.write((char*)alpha_raw, a);
+        free(alpha_raw);
+
+        //beta
+        rrr_t(beta_).serialize(out);
+
+        std::string inds("01");
+        if (child_[0]) {
+            out.write(inds.data() + 1, 1);
+            child_[0]->serialize(out);
+        } else {
+            out.write(inds.data(), 1);
+        }
+        if (child_[1]) {
+            out.write(inds.data() + 1, 1);
+            child_[1]->serialize(out);
+        } else {
+            out.write(inds.data(), 1);
+        }
+    }
+
     void WaveletTrie::print() {
         std::stack<std::pair<Node*,std::string>> nodestack;
         nodestack.emplace(root,"");
