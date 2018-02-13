@@ -5,15 +5,18 @@
 #include <cassert>
 
 #include "wavelet_trie.hpp"
+#include "unix_tools.hpp"
 
 typedef annotate::cpp_int cpp_int;
 
 int main(int argc, char** argv) {
-    assert(argc > 1);
+    assert(argc > 2);
     std::string line, digit;
     std::vector<cpp_int> nums_ref;
 
     //environment variable arguments
+    const char *step_char = std::getenv("STEP");
+    size_t step = step_char ? atoi(step_char) : -1llu;
     const char *test = std::getenv("TEST");
     const char *njobs = std::getenv("NJOBS");
     size_t n_jobs = 1;
@@ -23,50 +26,69 @@ int main(int argc, char** argv) {
     }
 
     annotate::WaveletTrie *wtr = NULL;
+    Timer timer;
+    double runtime = 0, readtime = 0;
     for (int f = 1; f < argc - 1; ++f) {
         std::vector<cpp_int> nums;
+        if (step < -1llu) {
+            nums.reserve(step);
+        }
         std::ifstream fin(argv[f]);
 
-        std::cout << "Reading " << f << std::endl;
+        std::cout << "Compressing " << f << std::endl;
+        timer.reset();
         while (std::getline(fin, line)) {
             std::istringstream sin(line);
             nums.emplace_back(0);
             while (std::getline(sin, digit, ',')) {
                 annotate::bit_set(nums.back(), std::stoi(digit));
             }
+            readtime += timer.elapsed();
+            if (nums.size() == step) {
+                if (test != NULL) {
+                    nums_ref.reserve(nums_ref.size() + step);
+                    nums_ref.insert(nums_ref.end(), nums.begin(), nums.end());
+                }
+                timer.reset();
+                if (!wtr) {
+                    wtr = new annotate::WaveletTrie(nums.begin(), nums.end());
+                } else {
+                    wtr->insert(annotate::WaveletTrie(nums.begin(), nums.end()));
+                }
+                runtime += timer.elapsed();
+                std::cout << "." << std::flush;
+                nums.clear();
+            }
+            timer.reset();
         }
-        fin.close();
-        nums_ref.reserve(nums_ref.size() + nums.size());
-        nums_ref.insert(nums_ref.end(), nums.begin(), nums.end());
-
-        std::cout << "Compressing\n";
-        const char *step_char = std::getenv("STEP");
-        size_t step = step_char ? atoi(step_char) : nums.size();
-        auto it = nums.begin();
-        for (; it + step < nums.end(); it += step) {
+        if (nums.size()) {
+            if (test != NULL) {
+                nums_ref.reserve(nums_ref.size() + nums.size());
+                nums_ref.insert(nums_ref.end(), nums.begin(), nums.end());
+            }
+            timer.reset();
             if (!wtr) {
-                wtr = new annotate::WaveletTrie(it, it + step);
+                wtr = new annotate::WaveletTrie(nums.begin(), nums.end());
             } else {
-                wtr->insert(annotate::WaveletTrie(it, it + step));
+                wtr->insert(annotate::WaveletTrie(nums.begin(), nums.end()));
             }
-            std::cout << "." << std::flush;
-            if (it != nums.begin() && (static_cast<uint64_t>(it - nums.begin()) / step % 100 == 0)) {
-                std::cout << std::endl;
-            }
-        }
-        if (it != nums.end()) {
-            if (!wtr) {
-                wtr = new annotate::WaveletTrie(it, nums.end());
-            } else {
-                wtr->insert(annotate::WaveletTrie(it, nums.end()));
-            }
-            std::cout << "." << std::flush;
+            runtime += timer.elapsed();
+            std::cout << std::endl;
+            get_RAM();
+            nums.clear();
         }
         std::cout << std::endl;
+        fin.close();
     }
 
+    if (wtr)
+        std::cout << "Num edges:\t" << wtr->size() << std::endl;
+    std::cout << "Reading:\t" << readtime << std::endl;
+    std::cout << "Compressing:\t" << runtime << std::endl;
+
     if (test != NULL) {
-        std::cout << "Uncompressing\n";
+        timer.reset();
+        std::cout << "Uncompressing:\t" << std::flush;
         assert(wtr->size() == nums_ref.size());
 #ifndef NPRINT
         wtr->print();
@@ -78,11 +100,15 @@ int main(int argc, char** argv) {
                 exit(1);
             }
         }
+        std::cout << timer.elapsed() << std::endl;
     }
     if (wtr) {
-        std::cout << "Serializing\n";
+        timer.reset();
+        std::cout << "Serializing:\t" << std::flush;
         std::ofstream fout(argv[argc - 1]);
-        wtr->serialize(fout);
+        size_t num_nodes = wtr->serialize(fout);
+        std::cout << timer.elapsed() << std::endl;
+        std::cout << "Num nodes:\t" << num_nodes << std::endl;
         delete wtr;
     }
     std::cout << "Done\n";

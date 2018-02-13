@@ -12,16 +12,13 @@ namespace annotate {
     typedef boost::multiprecision::mpz_int cpp_int;
     typedef cpp_int annot_t;
     typedef sdsl::bit_vector bv_t;
-    typedef sdsl::rrr_vector<> rrr_t;
+    typedef sdsl::rrr_vector<255,sdsl::int_vector<>,16> rrr_t;
     typedef sdsl::sd_vector<> sd_t;
 
     typedef cpp_int alpha_t;
     typedef bv_t beta_t;
     typedef beta_t::rank_1_type rank1_t;
     typedef beta_t::rank_0_type rank0_t;
-
-    //typedef boost::archive::binary_oarchive oarchive_t;
-    //typedef boost::archive::binary_iarchive iarchive_t;
 
     bool bit_test(const cpp_int &a, const size_t &col);
 
@@ -76,7 +73,7 @@ namespace annotate {
             template <typename T>
             void insert(const T &a, size_t i = -1llu);
 
-            void serialize(std::ostream &out) const;
+            size_t serialize(std::ostream &out) const;
 
         private:
             class Node;
@@ -107,8 +104,8 @@ namespace annotate {
 
             //swap
             void swap(Node&& that);
-            
-            void serialize(std::ostream &out) const;
+
+            size_t serialize(std::ostream &out) const;
 
             size_t size() { return beta_.size(); }
 
