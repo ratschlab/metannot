@@ -80,10 +80,19 @@ int main(int argc, char** argv) {
                 if (!num_rows)
                     break;
                 size_t size = deserializeNumber(fin);
-                nums.emplace_back(0);
-                for (size_t i = 0; i < size * 64; i += 64) {
-                    nums.back() |= cpp_int(deserializeNumber(fin)) << i;
+                std::vector<uint64_t> row(size);
+                for (auto it = row.begin(); it != row.end(); ++it) {
+                    *it = deserializeNumber(fin);
                 }
+                nums.emplace_back(0);
+                mpz_import(nums.back().backend().data(), row.size(), -1, sizeof(row[0]), 0, 0, &row[0]);
+#ifndef NDEBUG
+                if (nums.back() != 0) {
+                    for (size_t i = 0; i < row.size(); ++i) {
+                        assert(((nums.back() >> (i * 64)) & -1llu) == row[i]);
+                    }
+                }
+#endif
                 num_rows--;
             } else {
                 if (!std::getline(fin, line)) {
