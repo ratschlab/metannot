@@ -25,6 +25,14 @@ void serialize_vector_(std::ostream &out, const std::vector<cpp_int> &nums, size
     }
 }
 
+uint64_t deserializeNumber(std::istream &in) {
+    uint64_t n = 0;
+    for (size_t i = 0; i < sizeof(n); ++i) {
+        n = (n << 8) | in.get();
+    }
+    return n;
+}
+
 int main(int argc, char** argv) {
     assert(argc > 2);
     std::string line, digit;
@@ -36,6 +44,7 @@ int main(int argc, char** argv) {
     const char *test = std::getenv("TEST");
     const char *njobs = std::getenv("NJOBS");
     const char *dump_raw = std::getenv("DUMP");
+    const char *read_raw = std::getenv("RAW");
     size_t dump_cols = 0;
     size_t n_jobs = 1;
     if (njobs) {
@@ -53,20 +62,38 @@ int main(int argc, char** argv) {
     double runtime = 0;
     double readtime = 0;
     double dumptime = 0;
+    size_t num_rows = 0;
     for (int f = 1; f < argc - 1; ++f) {
         std::vector<cpp_int> nums;
         if (step < -1llu) {
             nums.reserve(step);
         }
         std::ifstream fin(argv[f]);
+        if (read_raw) {
+            num_rows = deserializeNumber(fin);
+        }
 
         std::cout << "Compressing " << f << std::endl;
         timer.reset();
-        while (std::getline(fin, line)) {
-            std::istringstream sin(line);
-            nums.emplace_back(0);
-            while (std::getline(sin, digit, ',')) {
-                annotate::bit_set(nums.back(), std::stoi(digit));
+        while (true) {
+            if (read_raw) {
+                if (!num_rows)
+                    break;
+                size_t size = deserializeNumber(fin);
+                nums.emplace_back(0);
+                for (size_t i = 0; i < size * 64; i += 64) {
+                    nums.back() |= cpp_int(deserializeNumber(fin)) << i;
+                }
+                num_rows--;
+            } else {
+                if (!std::getline(fin, line)) {
+                    break;
+                }
+                std::istringstream sin(line);
+                nums.emplace_back(0);
+                while (std::getline(sin, digit, ',')) {
+                    annotate::bit_set(nums.back(), std::stoi(digit));
+                }
             }
             readtime += timer.elapsed();
             if (nums.size() == step) {
@@ -140,11 +167,12 @@ int main(int argc, char** argv) {
     if (wtr) {
         timer.reset();
         std::cout << "Serializing:\t" << std::flush;
-        std::ofstream fout(argv[argc - 1]);
+        std::ofstream fout(argv[argc - 1], std::ofstream::binary | std::ofstream::ate);
         size_t num_nodes = wtr->serialize(fout);
-        fout.close();
         std::cout << timer.elapsed() << std::endl;
         std::cout << "Num nodes:\t" << num_nodes << std::endl;
+        std::cout << "Num bytes:\t" << fout.tellp() << std::endl;
+        fout.close();
         delete wtr;
     }
     if (dump_raw) {
