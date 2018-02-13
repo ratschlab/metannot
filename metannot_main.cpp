@@ -12,12 +12,15 @@
 
 typedef annotate::cpp_int cpp_int;
 
-void serialize_vector_(std::ostream &out, const std::vector<cpp_int> &nums, const size_t n_cols = 0) {
-    const char *a = "\0";
+void serialize_vector_(std::ostream &out, const std::vector<cpp_int> &nums, size_t n_cols = 0) {
+    n_cols += 64;
     for (auto it = nums.begin(); it != nums.end(); ++it) {
-        size_t size = annotate::serialize(out, *it);
+        size_t size = annotate::serialize(out, *it) + 8;
         if (size * 8 < n_cols) {
-            out.write(&a[0], (n_cols - (size * 8) + 7) >> 3);
+            char *zeros = (char*)malloc((n_cols + 7 - (size * 8)) >> 3);
+            memset(zeros, 0, (n_cols + 7 - (size * 8)) >> 3);
+            out.write(zeros, (n_cols + 7 - (size * 8)) >> 3);
+            free(zeros);
         }
     }
 }

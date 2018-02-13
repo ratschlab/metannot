@@ -143,15 +143,13 @@ namespace annotate {
             if (source.size() - j)
                 merged.set_int(i + j, source.get_int(j, source.size() - j), source.size() - j);
         } else {
-            merged = source;
+            //merged = source;
             merged.resize(target.size() + source.size());
-            /*
             j = 0;
             for (; j + 64 <= source.size(); j += 64) {
                 merged.set_int(j, source.get_int(j));
             }
             merged.set_int(j, source.get_int(j, source.size() - j), source.size() - j);
-            */
         }
         j = i;
         for (; j + 64 <= target.size(); j += 64) {
