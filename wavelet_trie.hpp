@@ -38,6 +38,8 @@ namespace annotate {
 
     size_t lsb(const cpp_int &a);
 
+    size_t serialize(std::ostream &out, const cpp_int &l_int);
+
     template <typename Vector>
     bv_t insert_zeors(const Vector &target, const size_t count = 0, const size_t i = 0);
 

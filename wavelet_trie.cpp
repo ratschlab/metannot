@@ -61,6 +61,15 @@ namespace annotate {
         return next_bit(a, 0);
     }
 
+    size_t serialize(std::ostream &out, const cpp_int &l_int) {
+        size_t a;
+        void *l_int_raw = mpz_export(NULL, &a, 1, 1, 0, 0, l_int.backend().data());
+        out.write((char*)&a, sizeof(a));
+        out.write((char*)l_int_raw, a);
+        free(l_int_raw);
+        return a;
+    }
+
     //TODO: align get_int to blocks in source
     template <typename Vector>
     bv_t insert_zeros(const Vector &target, const size_t count, const size_t i) {
@@ -174,11 +183,7 @@ namespace annotate {
 
     size_t  WaveletTrie::Node::serialize(std::ostream &out) const {
         //serialize alpha
-        size_t a;
-        void *alpha_raw = mpz_export(NULL, &a, 1, 1, 0, 0, alpha_.backend().data());
-        out.write((char*)&a, sizeof(a));
-        out.write((char*)alpha_raw, a);
-        free(alpha_raw);
+        ::annotate::serialize(out, alpha_);
 
         //beta
         rrr_t(beta_).serialize(out);

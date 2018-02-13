@@ -7,7 +7,20 @@
 #include "wavelet_trie.hpp"
 #include "unix_tools.hpp"
 
+
+//TODO: replace getenv with real argument parsing
+
 typedef annotate::cpp_int cpp_int;
+
+void serialize_vector_(std::ostream &out, const std::vector<cpp_int> &nums, const size_t n_cols = 0) {
+    const char *a = "\0";
+    for (auto it = nums.begin(); it != nums.end(); ++it) {
+        size_t size = annotate::serialize(out, *it);
+        if (size * 8 < n_cols) {
+            out.write(&a[0], (n_cols - (size * 8) + 7) >> 3);
+        }
+    }
+}
 
 int main(int argc, char** argv) {
     assert(argc > 2);
@@ -19,6 +32,8 @@ int main(int argc, char** argv) {
     size_t step = step_char ? atoi(step_char) : -1llu;
     const char *test = std::getenv("TEST");
     const char *njobs = std::getenv("NJOBS");
+    const char *dump_raw = std::getenv("DUMP");
+    size_t dump_cols = 0;
     size_t n_jobs = 1;
     if (njobs) {
         n_jobs = atoi(njobs);
@@ -27,7 +42,14 @@ int main(int argc, char** argv) {
 
     annotate::WaveletTrie *wtr = NULL;
     Timer timer;
-    double runtime = 0, readtime = 0;
+    std::ofstream dout;
+    if (dump_raw) {
+        dump_cols = atoi(dump_raw);
+        dout.open(std::string(argv[argc - 1]) + ".raw");
+    }
+    double runtime = 0;
+    double readtime = 0;
+    double dumptime = 0;
     for (int f = 1; f < argc - 1; ++f) {
         std::vector<cpp_int> nums;
         if (step < -1llu) {
@@ -57,6 +79,11 @@ int main(int argc, char** argv) {
                 }
                 runtime += timer.elapsed();
                 std::cout << "." << std::flush;
+                if (dump_raw) {
+                    timer.reset();
+                    serialize_vector_(dout, nums, dump_cols);
+                    dumptime += timer.elapsed();
+                }
                 nums.clear();
             }
             timer.reset();
@@ -75,6 +102,11 @@ int main(int argc, char** argv) {
             runtime += timer.elapsed();
             std::cout << std::endl;
             get_RAM();
+            if (dump_raw) {
+                timer.reset();
+                serialize_vector_(dout, nums, dump_cols);
+                dumptime += timer.elapsed();
+            }
             nums.clear();
         }
         std::cout << std::endl;
@@ -107,9 +139,14 @@ int main(int argc, char** argv) {
         std::cout << "Serializing:\t" << std::flush;
         std::ofstream fout(argv[argc - 1]);
         size_t num_nodes = wtr->serialize(fout);
+        fout.close();
         std::cout << timer.elapsed() << std::endl;
         std::cout << "Num nodes:\t" << num_nodes << std::endl;
         delete wtr;
+    }
+    if (dump_raw) {
+        dout.close();
+        std::cout << "Raw dump:\t" << dumptime << std::endl;
     }
     std::cout << "Done\n";
     return 0;
