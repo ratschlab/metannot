@@ -34,7 +34,10 @@ uint64_t deserializeNumber(std::istream &in) {
 }
 
 int main(int argc, char** argv) {
-    assert(argc > 2);
+    if (argc <= 2) {
+        std::cerr << "ERROR: please pass in at least two files: an input and an output." << std::endl;
+        exit(1);
+    }
     std::string line, digit;
     std::vector<cpp_int> nums_ref;
 
