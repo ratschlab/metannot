@@ -56,6 +56,7 @@ namespace annotate {
 
     class WaveletTrie {
         public:
+
             WaveletTrie();
 
             template <class Iterator>
@@ -64,7 +65,7 @@ namespace annotate {
             //destructor
             ~WaveletTrie();
 
-            cpp_int at(size_t i);
+            cpp_int at(size_t i, size_t j = -1llu);
 
             size_t size();
 
@@ -80,6 +81,8 @@ namespace annotate {
         private:
             class Node;
             Node* root;
+        //public:
+        //    typedef std::pair<Node*, size_t> iterator;
     };
 
     class WaveletTrie::Node {

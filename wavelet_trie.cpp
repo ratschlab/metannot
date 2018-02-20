@@ -143,13 +143,15 @@ namespace annotate {
             if (source.size() - j)
                 merged.set_int(i + j, source.get_int(j, source.size() - j), source.size() - j);
         } else {
-            //merged = source;
+            merged = source;
+            /*
             merged.resize(target.size() + source.size());
             j = 0;
             for (; j + 64 <= source.size(); j += 64) {
                 merged.set_int(j, source.get_int(j));
             }
             merged.set_int(j, source.get_int(j, source.size() - j), source.size() - j);
+            */
         }
         j = i;
         for (; j + 64 <= target.size(); j += 64) {
@@ -187,7 +189,7 @@ namespace annotate {
         rrr_t(beta_).serialize(out);
 
         const char *inds = "\0\1\2";
-        size_t ret_val = (bool)child_[0] + (bool)child_[1];
+        size_t ret_val = !(bool)child_[0] && !(bool)child_[1];
         out.write(&inds[ret_val], 1);
         if (child_[0]) {
             ret_val += child_[0]->serialize(out);
@@ -195,7 +197,7 @@ namespace annotate {
         if (child_[1]) {
             ret_val += child_[1]->serialize(out);
         }
-        return ret_val + 1;
+        return ret_val;
     }
 
     void WaveletTrie::print() {
@@ -364,12 +366,12 @@ namespace annotate {
         delete root;
     }
 
-    cpp_int WaveletTrie::at(size_t i) {
+    cpp_int WaveletTrie::at(size_t i, size_t j) {
         assert(i < size());
         Node *node = root;
         size_t length = 0;
         cpp_int annot;
-        while (!node->is_leaf()) {
+        while (!node->is_leaf() && length < j) {
             annot |= node->alpha_ << length;
             length += msb(node->alpha_) + 1;
             if (node->beta_[i]) {
@@ -626,6 +628,56 @@ namespace annotate {
             return next_col;
         }
         return ranges[2];
+        /*
+        mpz_t &a_m = a->backend().data();
+        mpz_t &b_m = b->backend().data();
+        auto a_l = mpz_limbs_read(a_m);
+        auto b_l = mpz_limbs_read(b_m);
+        size_t shift = sizeof(*a_l) << 3;
+        size_t sizes[2] = {
+            mpz_size(a_m),
+            mpz_size(b_m)
+        };
+        size_t i = col >> shift;
+        if (i >= sizes[0]) {
+            return std::min(next_col, next_bit(b_m, col));
+        }
+        if (i >= sizes[1]) {
+            return std::min(next_col, next_bit(a_m, col));
+        }
+        a_l += i;
+        b_l += i;
+        if (*a_l != *b_l) {
+            size_t temp_a = *a_l;
+            size_t temp_b = *b_l;
+            if (col - (i * shift)) {
+                size_t mask = ~((1llu << (col - (i * shift))) - 1);
+                temp_a &= mask;
+                temp_b &= mask;
+            }
+            if (temp_a == temp_b) {
+                ++i;
+            } else {
+                temp_a = temp_a ^ temp_b;
+                assert(temp_a != 0);
+                return std::min(next_col, (i * shift) + mpz_scan1(cpp_int(temp_a).backend().data(), 0));
+            }
+        }
+        while (i < sizes[0] && i < sizes[1] && *a_l == *b_l) {
+            ++a_l;
+            ++b_l;
+            ++i;
+        }
+        if (i == sizes[0]) {
+            return std::min(next_col, next_bit(b_m, i * shift));
+        }
+        if (i == sizes[1]) {
+            return std::min(next_col, next_bit(a_m, i * shift));
+        }
+        return std::min(next_col,std::min(
+                    next_bit(a_m, i * shift),
+                    next_bit(b_m, i * shift)));
+        */
     }
 
     size_t WaveletTrie::Node::next_different_bit_alpha(Node *curnode, Node *othnode) {
