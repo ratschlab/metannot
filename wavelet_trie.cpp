@@ -432,12 +432,14 @@ namespace annotate {
 #endif
             return false;
         }
+        /*
         if (all_zero != other.all_zero) {
 #ifdef NPRINT
             print(); other.print();
 #endif
             return false;
         }
+        */
         if ((bool)child_[0] != (bool)other.child_[0]) {
 #ifdef NPRINT
             std::cout << "left failed\n";
@@ -479,7 +481,7 @@ namespace annotate {
             Node *curnode = nodestack.top().first;
             std::string parent = nodestack.top().second;
             nodestack.pop();
-            std::cout << parent << ":\t" << curnode->alpha_ << ":" << curnode->beta_ << ";" << curnode->all_zero << "\n";
+            std::cout << parent << ":\t" << curnode->alpha_ << ":" << curnode->beta_ << ";" << curnode->is_leaf() << "\n";
             if (curnode->child_[0])
                 nodestack.emplace(curnode->child_[0], parent + std::string("L"));
             if (curnode->child_[1])
@@ -701,7 +703,7 @@ namespace annotate {
     }
 
     WaveletTrie::Node::Node(const size_t count)
-      : beta_(beta_t(bv_t(count))), all_zero(true), support(false) {}
+      : beta_(beta_t(bv_t(count))), all_zero(true), popcount(0), support(false) {}
         //set_beta_(beta_t(bv_t(count)));
     //}
 
@@ -785,25 +787,26 @@ namespace annotate {
         if (!popcount) {
             assert(!child_[1]);
             assert(!child_[0]);
-            assert(all_zero);
+            //assert(all_zero);
         }
         if (child_[ind]) {
-            assert(!all_zero);
-            if (all_zero)
+            //assert(!all_zero);
+            if (is_leaf())
                 return false;
             assert(child_[ind]->size() == rank);
             if (child_[ind]->size() != rank)
                 return false;
             return child_[ind]->check(0) && child_[ind]->check(1);
         } else {
-            assert(all_zero || (child_[!ind] && rank == 0));
-            if (!all_zero && (!child_[!ind] || rank > 0))
+            //assert(all_zero || (child_[!ind] && rank == 0));
+            //if (!all_zero && (!child_[!ind] || rank > 0))
+            assert(is_leaf() || (child_[!ind] && rank == 0));
+            if (!is_leaf() && (!child_[!ind] || rank > 0))
                 return false;
         }
         return true;
     }
 
-    //TODO: the thing is too big, Jim
     void WaveletTrie::Node::fill_left(bool rightside) {
         size_t lrank = size() - popcount;
         assert(lrank == rank0(size()));
@@ -833,12 +836,13 @@ namespace annotate {
     void WaveletTrie::Node::fill_ancestors(Node *othnode, bool ind, const size_t i) {
         if (child_[ind]) {
             if (!ind && othnode->all_zero && !all_zero) {
+            //if (!ind && (popcount - othnode->popcount) && !othnode->popcount) {
                 assert(othnode->popcount == 0);
                 //TODO: fix position when i != size()
                 fill_left(true);
             }
         } else {
-            assert(child_[!ind] || all_zero);
+            assert(child_[!ind] || (popcount == othnode->popcount));
             if (othnode->child_[ind]) {
                 std::swap(child_[ind], othnode->child_[ind]);
                 if (!ind && all_zero && !othnode->all_zero) {
@@ -889,8 +893,8 @@ namespace annotate {
             assert(curnode->check(1));
 #ifndef NPRINT
             std::cout << "" << "\t" << i << "\t"
-                      << curnode->alpha_ << ":" << curnode->beta_ << ";" << curnode->all_zero << "\t"
-                      << othnode->alpha_ << ":" << othnode->beta_ << ";" << othnode->all_zero << "\t->\t";
+                      << curnode->alpha_ << ":" << curnode->beta_ << ";" << curnode->is_leaf() << "\t"
+                      << othnode->alpha_ << ":" << othnode->beta_ << ";" << othnode->is_leaf() << "\t->\t";
 #endif
 
             Node::overlap_prefix_(curnode, othnode);
@@ -905,8 +909,8 @@ namespace annotate {
             Node::merge_beta_(curnode, othnode, i);
 
 #ifndef NPRINT
-            std::cout << curnode->alpha_ << ":" << curnode->beta_ << ";" << curnode->all_zero << "\t"
-                      << othnode->alpha_ << ":" << othnode->beta_ << ";" << othnode->all_zero << "\n";
+            std::cout << curnode->alpha_ << ":" << curnode->beta_ << ";" << curnode->is_leaf() << "\t"
+                      << othnode->alpha_ << ":" << othnode->beta_ << ";" << othnode->is_leaf() << "\n";
 #endif
             bool left  = curnode->child_[0] && othnode->child_[0];
             bool right = curnode->child_[1] && othnode->child_[1];
@@ -977,19 +981,19 @@ namespace annotate {
 #endif
         int cur = curnode->move_label_down_(common_pref);
 #ifndef NPRINT
-        std::cout << curnode->alpha_ << ":" << curnode->beta_ << ";" << curnode->all_zero;
+        std::cout << curnode->alpha_ << ":" << curnode->beta_ << ";" << curnode->is_leaf();
         if (cur > -1) {
             assert(!curnode->all_zero);
-            std::cout << "," << curnode->child_[cur]->alpha_ << ":" << curnode->child_[cur]->beta_ << ";" << curnode->child_[cur]->all_zero;
+            std::cout << "," << curnode->child_[cur]->alpha_ << ":" << curnode->child_[cur]->beta_ << ";" << curnode->child_[cur]->is_leaf();
         }
         std::cout << "\t";
 #endif
         int oth = othnode->move_label_down_(common_pref);
 #ifndef NPRINT
-        std::cout << othnode->alpha_ << ":" << othnode->beta_ << ";" << othnode->all_zero;
+        std::cout << othnode->alpha_ << ":" << othnode->beta_ << ";" << othnode->is_leaf();
         if (oth > -1) {
             assert(!othnode->all_zero);
-            std::cout << "," << othnode->child_[oth]->alpha_ << ":" << othnode->child_[oth]->beta_ << ";" << othnode->child_[oth]->all_zero;
+            std::cout << "," << othnode->child_[oth]->alpha_ << ":" << othnode->child_[oth]->beta_ << ";" << othnode->child_[oth]->is_leaf();
         }
         std::cout << "\t->\t";
 #endif
@@ -1085,15 +1089,15 @@ namespace annotate {
         bit_set(cur, curmsb);
         bit_set(oth, othmsb);
         if (next_set_bit == -1llu) {
-            if (curnode->all_zero == othnode->all_zero) {
+            if (curnode->is_leaf() == othnode->is_leaf()) {
                 return std::min(curmsb, othmsb);
             }
             return std::max(curmsb, othmsb);
         } else {
-            if (next_set_bit > curmsb && !curnode->all_zero) {
+            if (next_set_bit > curmsb && !curnode->is_leaf()) {
                 next_set_bit = curmsb;
             }
-            if (next_set_bit > othmsb && !othnode->all_zero) {
+            if (next_set_bit > othmsb && !othnode->is_leaf()) {
                 next_set_bit = othmsb;
             }
         }
