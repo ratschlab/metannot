@@ -1,10 +1,10 @@
-CXX=g++ -std=c++14 -fopenmp -march=native -DNPRINT -DNDEBUG -pthread -O3 #-pg -g -O2
+CXX=g++ -std=c++14 -fopenmp -march=native -DNPRINT -DNDEBUG -pthread -O3 #-g -O2 #-pg
 HOME=/cluster/home/hmustafa
 BLOOM=/cluster/home/hmustafa/metagraph/bloom/projects2014-metagenome/metagraph/external-libraries
 CXXFLAGS=-Wall -I$(HOME)/local/include -L$(HOME)/local/lib
 LDFLAGS=-lsdsl -lpthread -lgmp -lboost_serialization
 
-all: metannot pack_sd count_unique
+all: metannot pack_sd count_unique unpack_commas
 
 wavelet_trie.o: wavelet_trie.hpp wavelet_trie.cpp Makefile
 	$(CXX) $(CXXFLAGS) -c wavelet_trie.cpp
@@ -23,6 +23,9 @@ pack_sd: Makefile pack_sd.cpp
 
 count_unique: Makefile count_unique.cpp
 	$(CXX) $(CXXFLAGS) -o count_unique count_unique.cpp $(LDFLAGS)
+
+unpack_commas: Makefile unpack_commas.cpp
+	$(CXX) $(CXXFLAGS) -o unpack_commas unpack_commas.cpp $(LDFLAGS)
 
 clean:
 	rm metannot pack_sd count_unique *.o

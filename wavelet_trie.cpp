@@ -1,10 +1,37 @@
 #include "wavelet_trie.hpp"
+#include <omp.h>
+#include <thread>
+#include <mutex>
+#include <future>
 
 namespace annotate {
+
+    std::mutex mtx;
+
+    bool is_nonzero(const cpp_int &a) {
+        return a != 0;
+    }
+
+    bool is_nonzero(const std::set<size_t> &a) {
+        return a.size();
+    }
+
+    bool is_nonzero(const std::vector<size_t> &a) {
+        return a.size();
+    }
 
     bool bit_test(const cpp_int &a, const size_t &col) {
         assert(col < -1llu);
         return mpz_tstbit(a.backend().data(), col);
+    }
+
+    bool bit_test(const std::set<size_t> &a, const size_t &col) {
+        return a.find(col) != a.end();
+    }
+
+    bool bit_test(const std::vector<size_t> &a, const size_t &col) {
+        //return std::find(a.begin(), a.end(), col) != a.end();
+        return std::binary_search(a.begin(), a.end(), col);
     }
 
     void bit_set(mpz_t &a_d, const size_t &col) {
@@ -17,18 +44,75 @@ namespace annotate {
         mpz_setbit(a.backend().data(), col);
     }
 
+    void bit_set(std::set<size_t> &a, const size_t &col) {
+        assert(col < -1llu);
+        a.insert(col);
+    }
+
+    void bit_set(std::vector<size_t> &a, const size_t &col) {
+        assert(col < -1llu);
+        auto front = a.begin();
+        auto back = a.end();
+        while (std::distance(front, back) > 1) {
+            auto mid = front + std::distance(front, back) / 2;
+            if (*mid == col)
+                break;
+            if (*mid > col) {
+                back = mid;
+            } else {
+                front = mid;
+            }
+        }
+        if (std::distance(front, back) <= 1)
+            a.insert(back, col);
+    }
     void bit_unset(cpp_int &a, const size_t &col) {
         assert(col < -1llu);
         mpz_clrbit(a.backend().data(), col);
+    }
+
+    void bit_unset(std::set<size_t> &a, const size_t &col) {
+        auto index = a.find(col);
+        if (index != a.end())
+            a.erase(index);
+    }
+
+    void bit_unset(std::vector<size_t> &a, const size_t &col) {
+        auto index = std::find(a.begin(), a.end(), col);
+        if (index != a.end())
+            a.erase(index);
     }
 
     size_t next_bit(const cpp_int &a, const size_t &col) {
         assert(col < -1llu);
         return mpz_scan1(a.backend().data(), col);
     }
+    
+    size_t next_bit(const std::set<size_t> &a, const size_t &col) {
+        assert(col < -1llu);
+        auto lbound = a.lower_bound(col);
+        if (lbound == a.end())
+            return -1llu;
+        return *lbound;
+    }
+
+    size_t next_bit(const std::vector<size_t> &a, const size_t &col) {
+        assert(col < -1llu);
+        size_t lbound = -1llu;
+        for (auto &index : a) {
+            if (index >= col) {
+                lbound = std::min(lbound, index);
+                if (index == col)
+                    break;
+            }
+        }
+        return lbound;
+    }
 
     void clear_after(mpz_t &a_d, const size_t &col) {
-        assert(col < -1llu);
+        //assert(col < -1llu);
+        if (col == -1llu)
+            return;
         if (!col) {
             mpz_clear(a_d);
             mpz_init(a_d);
@@ -41,6 +125,21 @@ namespace annotate {
         assert(col < -1llu);
         mpz_t& a_d = a.backend().data();
         clear_after(a_d, col);
+    }
+
+    void clear_after(std::set<size_t> &a, const size_t &col) {
+        a.erase(a.lower_bound(col), a.end());
+    }
+
+    void clear_after(std::vector<size_t> &a, const size_t &col) {
+        auto it = a.begin();
+        while (it != a.end()) {
+            if (*it >= col) {
+                a.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
 
     size_t msb(const cpp_int &a) {
@@ -56,9 +155,29 @@ namespace annotate {
         return i;
     }
 
+    size_t msb(const std::set<size_t> &a) {
+        assert(a.size());
+        return *a.rbegin();
+    }
+
+    size_t msb(const std::vector<size_t> &a) {
+        assert(a.size());
+        return *std::max_element(a.begin(), a.end());
+    }
+
     size_t lsb(const cpp_int &a) {
         assert(a != 0);
         return next_bit(a, 0);
+    }
+
+    size_t lsb(const std::set<size_t> &a) {
+        assert(a.size());
+        return *a.begin();
+    }
+
+    size_t lsb(const std::vector<size_t> &a) {
+        assert(a.size());
+        return *std::min_element(a.begin(), a.end());
     }
 
     size_t serialize(std::ostream &out, const cpp_int &l_int) {
@@ -66,8 +185,24 @@ namespace annotate {
         void *l_int_raw = mpz_export(NULL, &a, 1, 1, 0, 0, l_int.backend().data());
         out.write((char*)&a, sizeof(a));
         out.write((char*)l_int_raw, a);
+#ifndef NDEBUG
+        cpp_int test = 0;
+        mpz_import(test.backend().data(), a, 1, 1, 0, 0, l_int_raw);
+        assert(test == l_int);
+#endif
         free(l_int_raw);
         return a;
+    }
+
+    cpp_int load(std::istream &in) {
+        cpp_int curint = 0;
+        size_t a;
+        in.read((char*)&a, sizeof(a));
+        void *l_int_raw = malloc(a);
+        in.read((char*)l_int_raw, a);
+        mpz_import(curint.backend().data(), a, 1, 1, 0, 0, l_int_raw);
+        free(l_int_raw);
+        return curint;
     }
 
     //TODO: align get_int to blocks in source
@@ -181,23 +316,160 @@ namespace annotate {
         return root->serialize(out);
     }
 
-    size_t  WaveletTrie::Node::serialize(std::ostream &out) const {
+    size_t WaveletTrie::load(std::istream &in) {
+        if (!root) {
+            root = new Node();
+        }
+        return root->load(in);
+    }
+
+    bool WaveletTrie::operator==(const WaveletTrie &other) const {
+        if ((bool)root != (bool)other.root)
+            return false;
+        return *root == *other.root;
+    }
+
+    bool WaveletTrie::operator!=(const WaveletTrie &other) const {
+        return !(*this == other);
+    }
+
+    size_t WaveletTrie::Node::serialize(std::ostream &out) const {
         //serialize alpha
         ::annotate::serialize(out, alpha_);
 
         //beta
         rrr_t(beta_).serialize(out);
 
-        const char *inds = "\0\1\2";
+        //const char *inds = "\0\1\2\3";
         size_t ret_val = !(bool)child_[0] && !(bool)child_[1];
-        out.write(&inds[ret_val], 1);
+        char val = (bool)child_[0] | ((uint8_t)((bool)child_[1]) << 1);
+        //std::cout << (size_t)val << "\n";
+        out.write(&val, 1);
+        if (val == 1) {
+            std::cerr << "ERROR: weird case\n";
+            exit(1);
+        }
         if (child_[0]) {
+            assert(val & 1);
             ret_val += child_[0]->serialize(out);
         }
         if (child_[1]) {
+            assert(val & 2);
             ret_val += child_[1]->serialize(out);
         }
         return ret_val;
+    }
+
+    void WaveletTrie::Node::print(std::ostream &out) const {
+        out << alpha_ << ":" << beta_ << ";" << all_zero << std::endl;
+    }
+
+    size_t WaveletTrie::Node::load(std::istream &in) {
+        if (child_[0])
+            delete child_[0];
+        if (child_[1])
+            delete child_[1];
+        alpha_ = ::annotate::load(in);
+        rrr_t beta;
+        beta.load(in);
+        //decompress
+        beta_.resize(beta.size());
+        popcount = 0;
+        size_t i = 0;
+        for (; i + 64 <= beta.size(); i += 64) {
+            size_t limb = beta.get_int(i);
+            beta_.set_int(i, limb);
+            popcount += __builtin_popcountll(limb);
+        }
+        size_t limb = beta.get_int(i, beta.size() - i);
+        beta_.set_int(i, limb, beta.size() - i);
+        popcount += __builtin_popcountll(limb);
+        char val;
+        in.read(&val, 1);
+        if (val >= '0') {
+            val -= '0';
+        }
+        if (val == 1) {
+            std::cerr << "ERROR: weird case\n";
+            exit(1);
+        }
+        //std::cout << (size_t)val << "\n";
+        if (!popcount) {
+            all_zero = true;
+            assert(!val);
+        } else {
+            assert(val);
+        }
+        if (val & 1) {
+            //left child exists
+            child_[0] = new Node();
+            child_[0]->load(in);
+        }
+        if (val & 2) {
+            //right child exists
+            child_[1] = new Node();
+            child_[1]->load(in);
+        }
+        return 0;
+    }
+
+    bool WaveletTrie::Node::operator==(const WaveletTrie::Node &other) const {
+        if (alpha_ != other.alpha_) {
+#ifdef NPRINT
+            print(); other.print();
+#endif
+            return false;
+        }
+        if (beta_ != other.beta_) {
+#ifdef NPRINT
+            print(); other.print();
+#endif
+            return false;
+        }
+        if (popcount != other.popcount) {
+#ifdef NPRINT
+            print(); other.print();
+#endif
+            return false;
+        }
+        if (all_zero != other.all_zero) {
+#ifdef NPRINT
+            print(); other.print();
+#endif
+            return false;
+        }
+        if ((bool)child_[0] != (bool)other.child_[0]) {
+#ifdef NPRINT
+            std::cout << "left failed\n";
+#endif
+            return false;
+        }
+        if ((bool)child_[1] != (bool)other.child_[1]) {
+#ifdef NPRINT
+            std::cout << "right failed\n";
+#endif
+            return false;
+        }
+        bool left_val = true;
+        if (child_[0]) {
+#ifdef NPRINT
+            std::cout << "left\n";
+#endif
+            left_val = *child_[0] == *other.child_[0];
+        }
+        if (!left_val)
+            return false;
+        if (child_[1]) {
+#ifdef NPRINT
+            std::cout << "right\n";
+#endif
+            return *child_[1] == *other.child_[1];
+        }
+        return true;
+    }
+
+    bool WaveletTrie::Node::operator!=(const WaveletTrie::Node &other) const {
+        return !(*this == other);
     }
 
     void WaveletTrie::print() {
@@ -215,6 +487,229 @@ namespace annotate {
         }
     }
 
+
+    template<>
+    void WaveletTrie::Node::set_alpha_<cpp_int>(const cpp_int &alpha, size_t col, size_t col_end) {
+        //alpha_ = (*row_begin >> col) % mask; //reference
+        mpz_t& alph = alpha_.backend().data();
+        mpz_tdiv_q_2exp(alph, alpha.backend().data(), col);
+        clear_after(alph, col_end - col);
+        bit_set(alph, col_end - col);
+    }
+
+    template <>
+    void WaveletTrie::Node::set_alpha_<std::set<size_t>>(const std::set<size_t> &indices, size_t col, size_t col_end) {
+        alpha_ = 0;
+        auto &alph = alpha_.backend().data();
+        for (auto it = indices.lower_bound(col); it != indices.end(); ++it) {
+            if (*it >= col_end)
+                break;
+            bit_set(alph, *it - col);
+        }
+        bit_set(alph, col_end - col);
+    }
+
+    template <class IndexContainer>
+    void WaveletTrie::Node::set_alpha_(const IndexContainer &indices, size_t col, size_t col_end) {
+        alpha_ = 0;
+        auto &alph = alpha_.backend().data();
+        for (auto it = indices.begin(); it != indices.end(); ++it) {
+            if (*it >= col_end)
+                break;
+            if (*it >= col)
+                bit_set(alph, *it - col);
+        }
+        bit_set(alph, col_end - col);
+    }
+
+    template<>
+    void WaveletTrie::Node::set_alpha_<cpp_int>(const cpp_int &alpha, size_t col) {
+        mpz_t& alph = alpha_.backend().data();
+        mpz_tdiv_q_2exp(alph, alpha.backend().data(), col);
+        if (is_nonzero(alpha_)) {
+            bit_set(alpha_, msb(alpha_) + 1);
+        } else {
+            bit_set(alpha_, 0);
+        }
+    }
+
+    template <>
+    void WaveletTrie::Node::set_alpha_<std::set<size_t>>(const std::set<size_t> &indices, size_t col) {
+        alpha_ = 0;
+        auto &alph = alpha_.backend().data();
+        for (auto it = indices.lower_bound(col); it != indices.end(); ++it) {
+            bit_set(alph, *it - col);
+        }
+        if (is_nonzero(alpha_)) {
+            bit_set(alpha_, msb(alpha_) + 1);
+        } else {
+            bit_set(alpha_, 0);
+        }
+    }
+
+    template <class IndexContainer>
+    void WaveletTrie::Node::set_alpha_(const IndexContainer &indices, size_t col) {
+        alpha_ = 0;
+        auto &alph = alpha_.backend().data();
+        for (auto it = indices.begin(); it != indices.end(); ++it) {
+            if (*it >= col)
+                bit_set(alph, *it - col);
+        }
+        if (is_nonzero(alpha_)) {
+            bit_set(alpha_, msb(alpha_) + 1);
+        } else {
+            bit_set(alpha_, 0);
+        }
+    }
+
+    template <class Iterator>
+    WaveletTrie::WaveletTrie(Iterator row_begin, Iterator row_end) {
+        if (row_end > row_begin) {
+            Prefix prefix = WaveletTrie::Node::longest_common_prefix(row_begin, row_end, 0);
+            if (prefix.allequal) {
+                root = new Node(row_end - row_begin);
+                root->set_alpha_(*row_begin, 0);
+                /*
+                root = new Node(alpha, row_end - row_begin);
+                cpp_int alpha = *row_begin;
+                if (alpha) {
+                    bit_set(alpha, msb(alpha) + 1);
+                } else {
+                    bit_set(alpha, 0);
+                }
+                */
+            } else {
+//#pragma omp parallel
+//#pragma omp single nowait
+                std::vector<std::future<void>> thread_queue;
+                //std::vector<std::function<void()>> thread_queue;
+                thread_queue.reserve(row_end - row_begin);
+                root = new Node();
+                root->set_alpha_(*row_begin, 0, prefix.col);
+                thread_queue.push_back(std::async(std::launch::deferred, [=, &thread_queue]() {
+                //thread_queue.push_back([=, &thread_queue]() {
+                    root->fill_beta(row_begin, row_end, 0, thread_queue, prefix);
+                //});
+                }));
+                for (size_t i = 0; i < thread_queue.size(); ++i) {
+                    thread_queue.at(i).get();
+                    //thread_queue.at(i)();
+                }
+                //root = new Node(row_begin, row_end, 0, prefix);
+            }
+        } else {
+            root = NULL;
+        }
+#ifndef NPRINT
+        print();
+        std::cout << "\n";
+#endif
+    }
+
+    template <class Iterator>
+    //WaveletTrie::Node::Node(const Iterator &row_begin, const Iterator &row_end,
+    void WaveletTrie::Node::fill_beta(const Iterator &row_begin, const Iterator &row_end,
+            //const size_t &col, std::vector<std::function<void()>> &thread_queue, Prefix prefix) {
+            const size_t &col, std::vector<std::future<void>> &thread_queue, Prefix prefix) {
+        if (row_end > row_begin) {
+            assert(prefix.col != -1llu);
+            assert(!prefix.allequal);
+            size_t col_end = prefix.col;
+
+            //set alpha
+            //set_alpha_(*row_begin, col, col_end);
+
+            //set beta and compute common prefices
+            //bv_t beta;
+            beta_.resize(row_end - row_begin);
+            Prefix prefices[2];
+            Iterator split = row_begin;
+            std::vector<typename std::iterator_traits<Iterator>::value_type> right_children;
+            sdsl::util::set_to_value(beta_, 0);
+            auto begin = std::make_move_iterator(row_begin);
+            auto end = std::make_move_iterator(row_end);
+            for (auto it = begin; it != end; ++it) {
+                if (bit_test(*it, col_end)) {
+                    beta_[it - begin] = 1;
+                    right_children.emplace_back(*it);
+                    prefices[1].col = next_different_bit_(
+                            right_children.front(), right_children.back(),
+                            col_end + 1, prefices[1].col);
+                } else {
+                    if (split - row_begin != it - begin) //prevent setting equality on same object
+                        *split = *it;
+                    prefices[0].col = next_different_bit_(
+                            *row_begin, *split,
+                            col_end + 1, prefices[0].col);
+                    split++;
+                }
+            }
+            popcount = right_children.size();
+            //set_beta_(beta);
+            support = false;
+            assert(popcount == rank1(size()));
+            //distribute to left and right children
+            assert(split != row_begin && split != row_end);
+            std::move(right_children.begin(), right_children.end(), split);
+            right_children.clear();
+
+            //TODO: copied code here
+            //handle trivial cases first
+            if (prefices[0].col == -1llu) {
+                child_[0] = new Node(split - row_begin);
+                child_[0]->set_alpha_(*row_begin, col_end + 1);
+                assert(child_[0]->size() == rank0(beta.size()));
+            }
+
+            if (prefices[1].col == -1llu) {
+                child_[1] = new Node(row_end - split);
+                child_[1]->set_alpha_(*split, col_end + 1);
+                assert(child_[1]->size() == rank1(beta.size()));
+            }
+
+            std::lock_guard<std::mutex> lock(mtx);
+            //then recursive calls
+            if (prefices[0].col != -1llu) {
+                prefices[0].allequal = false;
+                child_[0] = new Node();
+                child_[0]->set_alpha_(*row_begin, col_end + 1, prefices[0].col);
+                thread_queue.push_back(std::async(std::launch::deferred, [=, &thread_queue]() {
+                //thread_queue.push_back([=, &thread_queue]() {
+                    child_[0]->fill_beta(row_begin, split, col_end + 1, thread_queue, prefices[0]);
+                //});
+                }));
+                //child_[0]->fill_beta(row_begin, split, col_end + 1, thread_queue, prefices[0]);
+
+                //child_[0] = new Node(row_begin, split, col_end + 1, prefices[0]);
+                //assert(child_[0]->size() == rank0(beta.size()));
+            }
+
+            if (prefices[1].col != -1llu) {
+                prefices[1].allequal = false;
+                child_[1] = new Node();
+                child_[1]->set_alpha_(*split, col_end + 1, prefices[1].col);
+                thread_queue.push_back(std::async(std::launch::deferred, [=, &thread_queue]() {
+                //thread_queue.push_back([=, &thread_queue]() {
+                    child_[1]->fill_beta(split, row_end, col_end + 1, thread_queue, prefices[1]);
+                //});
+                }));
+                //child_[1]->fill_beta(split, row_end, col_end + 1, thread_queue, prefices[1]);
+                //child_[1] = new Node(split, row_end, col_end + 1, prefices[1]);
+                //assert(child_[1]->size() == rank1(beta.size()));
+            }
+        }
+    }
+
+    WaveletTrie::Node::Node(const size_t count)
+      : beta_(beta_t(bv_t(count))), all_zero(true), support(false) {}
+        //set_beta_(beta_t(bv_t(count)));
+    //}
+
+    WaveletTrie::Node::Node(const cpp_int &alpha, const size_t count)
+      : Node(count) {
+        alpha_ = alpha;
+    }
+
     WaveletTrie::Node::Node(const WaveletTrie::Node &that)
         : alpha_(that.alpha_), beta_(that.beta_),
           rank1_(that.rank1_), rank0_(that.rank0_),
@@ -226,89 +721,6 @@ namespace annotate {
         }
         if (that.child_[1]) {
             child_[1] = new Node(*that.child_[1]);
-        }
-    }
-
-    template <class Iterator>
-    WaveletTrie::Node::Node(const Iterator &row_begin, const Iterator &row_end,
-            const size_t &col, Prefix prefix) {
-        if (row_end > row_begin) {
-            assert(prefix.col != -1llu);
-            assert(!prefix.allequal);
-            size_t col_end = prefix.col;
-
-            //set alpha
-            //alpha_ = (*row_begin >> col) % mask; //reference
-            mpz_t& alph = alpha_.backend().data();
-            mpz_tdiv_q_2exp(alph, row_begin->backend().data(), col);
-            clear_after(alph, col_end - col);
-            bit_set(alph, col_end - col);
-
-            //set beta and compute common prefices
-            bv_t beta;
-            beta.resize(row_end - row_begin);
-            Prefix prefices[2];
-            Iterator split = row_begin;
-            std::vector<cpp_int> right_children;
-            sdsl::util::set_to_value(beta, 0);
-            for (auto it = row_begin; it != row_end; ++it) {
-                if (bit_test(*it, col_end)) {
-                    beta[it - row_begin] = 1;
-                    popcount++;
-                    right_children.emplace_back(*it);
-                    prefices[1].col = next_different_bit_(
-                            right_children.begin(), right_children.end() - 1,
-                            col_end + 1, prefices[1].col);
-                } else {
-                    *split = *it;
-                    prefices[0].col = next_different_bit_(
-                            row_begin, split,
-                            col_end + 1, prefices[0].col);
-                    split++;
-                }
-            }
-            set_beta_(beta);
-            assert(popcount == rank1(size()));
-            //distribute to left and right children
-            assert(split != row_begin && split != row_end);
-            std::swap_ranges(right_children.begin(), right_children.end(), split);
-
-            //TODO: copied code here
-            if (prefices[0].col != -1llu) {
-                prefices[0].allequal = false;
-                child_[0] = new Node(row_begin, split, col_end + 1, prefices[0]);
-                assert(child_[0]->size() == rank0(beta.size()));
-            } else {
-                cpp_int new_alpha = *row_begin;
-                mpz_t& alph = new_alpha.backend().data();
-                mpz_tdiv_q_2exp(alph, alph, col_end + 1);
-                if (new_alpha) {
-                    bit_set(new_alpha, msb(new_alpha) + 1);
-                } else {
-                    bit_set(new_alpha, 0);
-                }
-#pragma omp task
-                child_[0] = new Node(new_alpha, split - row_begin);
-                //assert(child_[0]->size() == rank0(beta.size()));
-            }
-
-            if (prefices[1].col != -1llu) {
-                prefices[1].allequal = false;
-                child_[1] = new Node(split, row_end, col_end + 1, prefices[1]);
-                assert(child_[1]->size() == rank1(beta.size()));
-            } else {
-                cpp_int new_alpha = *split;
-                mpz_t& alph = new_alpha.backend().data();
-                mpz_tdiv_q_2exp(alph, alph, col_end + 1);
-                if (new_alpha) {
-                    bit_set(new_alpha, msb(new_alpha) + 1);
-                } else {
-                    bit_set(new_alpha, 0);
-                }
-#pragma omp task
-                child_[1] = new Node(new_alpha, row_end - split);
-                //assert(child_[1]->size() == rank1(beta.size()));
-            }
         }
     }
 
@@ -326,41 +738,9 @@ namespace annotate {
         that.child_[1] = NULL;
     }
 
-    WaveletTrie::Node::Node(const size_t count)
-      : all_zero(true) {
-        set_beta_(beta_t(bv_t(count)));
-    }
+    template <class Container>
+    WaveletTrie::WaveletTrie(Container &rows) : WaveletTrie::WaveletTrie(rows.begin(), rows.end()) {}
 
-    WaveletTrie::Node::Node(const cpp_int &alpha, const size_t count)
-      : Node(count) {
-        alpha_ = alpha;
-    }
-
-    template <class Iterator>
-    WaveletTrie::WaveletTrie(Iterator row_begin, Iterator row_end) {
-        if (row_end > row_begin) {
-            Prefix prefix = WaveletTrie::Node::longest_common_prefix(row_begin, row_end, 0);
-            if (prefix.allequal) {
-                cpp_int alpha = *row_begin;
-                if (alpha) {
-                    bit_set(alpha, msb(alpha) + 1);
-                } else {
-                    bit_set(alpha, 0);
-                }
-                root = new Node(alpha, row_end - row_begin);
-            } else {
-#pragma omp parallel
-#pragma omp single nowait
-                root = new Node(row_begin, row_end, 0, prefix);
-            }
-        } else {
-            root = NULL;
-        }
-#ifndef NPRINT
-        print();
-        std::cout << "\n";
-#endif
-    }
 
     WaveletTrie::~WaveletTrie() {
         delete root;
@@ -434,7 +814,9 @@ namespace annotate {
                 Node *lchild = jnode->child_[0];
                 lchild->move_label_down_(lsb(lchild->alpha_));
                 assert(lchild->alpha_ == 1 || ((lchild->alpha_ | 1) == lchild->alpha_ + 1));
-                lchild->set_beta_(insert_zeros(lchild->beta_, lrank - lchild->size(), rightside ? lchild->size() : 0));
+                //lchild->set_beta_(insert_zeros(lchild->beta_, lrank - lchild->size(), rightside ? lchild->size() : 0));
+                lchild->beta_ = insert_zeros(lchild->beta_, lrank - lchild->size(), rightside ? lchild->size() : 0);
+                lchild->support = false;
                 lrank -= lchild->popcount;
                 jnode = jnode->child_[0];
             }
@@ -474,7 +856,7 @@ namespace annotate {
         }
     }
 
-    void WaveletTrie::insert(WaveletTrie&& wtr, size_t i) {
+    void WaveletTrie::insert(WaveletTrie &wtr, size_t i) {
         if (!wtr.root) {
             return;
         }
@@ -536,8 +918,14 @@ namespace annotate {
                 assert(curnode->size() - curnode->popcount
                         == curnode->child_[0]->size() + othnode->child_[0]->size()
                 );
+                if (right) {
 #pragma omp task if (curnode->child_[0]->size() > 32)
-                Node::merge(curnode->child_[0], othnode->child_[0], il);
+                    Node::merge(curnode->child_[0], othnode->child_[0], il);
+                } else {
+                    curnode = curnode->child_[0];
+                    othnode = othnode->child_[0];
+                    i = il;
+                }
             }
             if (right) {
                 assert(!curnode->all_zero);
@@ -546,7 +934,7 @@ namespace annotate {
                 curnode = curnode->child_[1];
                 othnode = othnode->child_[1];
                 i = ir;
-            } else {
+            } else if (!left) {
                 curnode = NULL;
                 othnode = NULL;
             }
@@ -613,84 +1001,89 @@ namespace annotate {
     }
 
     //find first different bit between two cpp_ints
-    template <class Iterator>
-    size_t WaveletTrie::Node::next_different_bit_(const Iterator &a, const Iterator &b,
-            const size_t col, size_t next_col) {
+    template <class IndexContainer>
+    size_t WaveletTrie::Node::next_different_bit_(const IndexContainer &a, const IndexContainer &b,
+            size_t col, size_t next_col) {
         if (col == next_col)
             return next_col;
-        size_t ranges[3] = {next_bit(*a, col), next_bit(*b, col), next_col};
+        size_t ranges[3] = {next_bit(a, col), next_bit(b, col), next_col};
         while (ranges[0] == ranges[1] && ranges[0] < ranges[2] && ranges[1] < ranges[2]) {
-            ranges[0] = next_bit(*a, ranges[0] + 1);
-            ranges[1] = next_bit(*b, ranges[1] + 1);
+            ranges[0] = next_bit(a, ranges[0] + 1);
+            ranges[1] = next_bit(b, ranges[1] + 1);
         }
-        next_col = std::min(ranges[0], ranges[1]);
-        if (ranges[0] != ranges[1] && next_col < ranges[2]) {
+        size_t next_col2 = std::min(ranges[0], ranges[1]);
+        if (ranges[0] == ranges[1] || next_col2 >= ranges[2])
+            next_col2 = ranges[2];
+        return next_col2;
+    }
+
+    template<>
+    size_t WaveletTrie::Node::next_different_bit_<cpp_int>(const cpp_int &a, const cpp_int &b,
+            size_t col, size_t next_col) {
+        if (col == next_col)
             return next_col;
-        }
-        return ranges[2];
-        /*
-        mpz_t &a_m = a->backend().data();
-        mpz_t &b_m = b->backend().data();
-        auto a_l = mpz_limbs_read(a_m);
-        auto b_l = mpz_limbs_read(b_m);
-        size_t shift = sizeof(*a_l) << 3;
-        size_t sizes[2] = {
-            mpz_size(a_m),
-            mpz_size(b_m)
-        };
+
+        //try to move forward one limb at a time
+        //get amount to shift based on limb size
+        size_t shift = __builtin_clzll(mp_bits_per_limb) ^ 63;
         size_t i = col >> shift;
-        if (i >= sizes[0]) {
-            return std::min(next_col, next_bit(b_m, col));
-        }
-        if (i >= sizes[1]) {
-            return std::min(next_col, next_bit(a_m, col));
-        }
-        a_l += i;
-        b_l += i;
-        if (*a_l != *b_l) {
-            size_t temp_a = *a_l;
-            size_t temp_b = *b_l;
-            if (col - (i * shift)) {
-                size_t mask = ~((1llu << (col - (i * shift))) - 1);
-                temp_a &= mask;
-                temp_b &= mask;
+        size_t end = next_col >> shift;
+        if (end > i) {
+            const mpz_t &a_m = a.backend().data();
+            const mpz_t &b_m = b.backend().data();
+            auto a_l = mpz_limbs_read(a_m) + i;
+            auto b_l = mpz_limbs_read(b_m) + i;
+            auto a_e = mpz_limbs_read(a_m) + mpz_size(a_m);
+            auto b_e = mpz_limbs_read(b_m) + mpz_size(b_m);
+            if (a_l < a_e && b_l < b_e) {
+                if (*a_l == *b_l) {
+                    col = (i + 1) << shift;
+                    ++a_l;
+                    ++b_l;
+                } else if ((i << shift) < col) {
+                    //if col is in the middle of a limb, mask out earlier bits
+                    size_t mask = ~((1llu << (col % (1llu << shift))) - 1);
+                    if ((*a_l & mask) == (*b_l & mask)) {
+                        ++a_l;
+                        ++b_l;
+                        col = (i + 1) << shift;
+                    }
+                }
+                while (a_l != a_e && b_l != b_e && *a_l == *b_l && i < end) {
+                    col += 1llu << shift;
+                    ++a_l;
+                    ++b_l;
+                    ++i;
+                }
             }
-            if (temp_a == temp_b) {
-                ++i;
-            } else {
-                temp_a = temp_a ^ temp_b;
-                assert(temp_a != 0);
-                return std::min(next_col, (i * shift) + mpz_scan1(cpp_int(temp_a).backend().data(), 0));
-            }
         }
-        while (i < sizes[0] && i < sizes[1] && *a_l == *b_l) {
-            ++a_l;
-            ++b_l;
-            ++i;
+
+        //when at first different limb, use mpz API
+        size_t ranges[3] = {next_bit(a, col), next_bit(b, col), next_col};
+        while (ranges[0] == ranges[1] && ranges[0] < ranges[2] && ranges[1] < ranges[2]) {
+            ranges[0] = next_bit(a, ranges[0] + 1);
+            ranges[1] = next_bit(b, ranges[1] + 1);
         }
-        if (i == sizes[0]) {
-            return std::min(next_col, next_bit(b_m, i * shift));
-        }
-        if (i == sizes[1]) {
-            return std::min(next_col, next_bit(a_m, i * shift));
-        }
-        return std::min(next_col,std::min(
-                    next_bit(a_m, i * shift),
-                    next_bit(b_m, i * shift)));
-        */
+        size_t next_col2 = std::min(ranges[0], ranges[1]);
+        if (ranges[0] == ranges[1] || next_col2 >= ranges[2])
+            next_col2 = ranges[2];
+        return next_col2;
     }
 
     size_t WaveletTrie::Node::next_different_bit_alpha(Node *curnode, Node *othnode) {
         assert(curnode->alpha_ != 0);
         assert(othnode->alpha_ != 0);
-        auto cur = curnode->alpha_;
-        auto oth = othnode->alpha_;
+        auto &cur = curnode->alpha_;
+        auto &oth = othnode->alpha_;
+
         //TODO: replace this with a single pass
         size_t curmsb = msb(cur);
         size_t othmsb = msb(oth);
         bit_unset(cur, curmsb);
         bit_unset(oth, othmsb);
-        size_t next_set_bit = next_different_bit_(&cur, &oth);
+        size_t next_set_bit = next_different_bit_(cur, oth);
+        bit_set(cur, curmsb);
+        bit_set(oth, othmsb);
         if (next_set_bit == -1llu) {
             if (curnode->all_zero == othnode->all_zero) {
                 return std::min(curmsb, othmsb);
@@ -718,16 +1111,16 @@ namespace annotate {
         }
         //prefix.col = -1llu;
         for (auto it = row_begin + 1; it != row_end; ++it) {
-            prefix.col = next_different_bit_(row_begin, it, col, prefix.col);
+            prefix.col = next_different_bit_(*row_begin, *it, col, prefix.col);
             if (prefix.col == col)
                 break;
         }
         if (prefix.col == -1llu) {
             //all zeros or all equal
-            if (*row_begin == 0) {
-                prefix.col = col;
-            } else {
+            if (is_nonzero(*row_begin)) {
                 prefix.col = std::max(msb(*row_begin), col);
+            } else {
+                prefix.col = col;
             }
             return prefix;
         }
@@ -747,14 +1140,18 @@ namespace annotate {
             mpz_t& child_alpha = child->alpha_.backend().data();
             mpz_tdiv_q_2exp(child_alpha, alpha_.backend().data(), length + 1);
             //TODO: replace with operator=
-            child->set_beta_(beta_);
+            //child->set_beta_(beta_);
+            child->beta_ = beta_;
+            child->support = false;
             child->child_[0] = child_[0];
             child->child_[1] = child_[1];
             child->all_zero = all_zero;
             child->popcount = popcount;
             all_zero = false;
             bool beta_bit = bit_test(alpha_, length);
-            set_beta_(bv_t(size(), beta_bit));
+            //set_beta_(bv_t(size(), beta_bit));
+            beta_ = beta_t(bv_t(size(), beta_bit));
+            support = false;
             //only want length bits left
             clear_after(alpha_, length);
             bit_set(alpha_, length);
@@ -799,6 +1196,7 @@ namespace annotate {
             i = curnode->beta_.size();
         }
         assert(i <= curnode->beta_.size());
+        /*
 #ifndef NPRINT
         std::cout << i << "\t";
 #endif
@@ -826,17 +1224,22 @@ namespace annotate {
         }
         assert(popcount == curnode->popcount + othnode->popcount);
 #endif
+        */
         curnode->popcount += othnode->popcount;
-        curnode->set_beta_(beta_new);
+        //curnode->set_beta_(beta_new);
+        curnode->beta_ = insert_range(curnode->beta_, othnode->beta_, i);
+        curnode->support = false;
         assert(curnode->popcount == curnode->rank1(curnode->size()));
     }
 
+    /*
     template <class Vector>
     void WaveletTrie::Node::set_beta_(const Vector &bv) {
         assert(bv.size());
         beta_ = beta_t(bv);
         support = false;
     }
+    */
 
     size_t WaveletTrie::Node::rank0(const size_t i) {
         if (!support) {
@@ -856,6 +1259,11 @@ namespace annotate {
         return rank1_(i);
     }
 
-    template WaveletTrie::WaveletTrie(std::vector<cpp_int>::iterator, std::vector<cpp_int>::iterator);
+    template WaveletTrie::WaveletTrie(std::vector<cpp_int>::iterator&, std::vector<cpp_int>::iterator&);
+    template WaveletTrie::WaveletTrie(std::vector<cpp_int>&);
+    template WaveletTrie::WaveletTrie(std::vector<std::set<size_t>>::iterator&, std::vector<std::set<size_t>>::iterator&);
+    template WaveletTrie::WaveletTrie(std::vector<std::set<size_t>>&);
+    template WaveletTrie::WaveletTrie(std::vector<std::vector<size_t>>::iterator&, std::vector<std::vector<size_t>>::iterator&);
+    template WaveletTrie::WaveletTrie(std::vector<std::vector<size_t>>&);
 
 };
