@@ -361,7 +361,7 @@ namespace annotate {
     }
 
     void WaveletTrie::Node::print(std::ostream &out) const {
-        out << alpha_ << ":" << beta_ << ";" << all_zero << std::endl;
+        out << alpha_ << ":" << beta_ << ";" << is_leaf() << std::endl;
     }
 
     size_t WaveletTrie::Node::load(std::istream &in) {
@@ -658,13 +658,13 @@ namespace annotate {
             if (prefices[0].col == -1llu) {
                 child_[0] = new Node(split - row_begin);
                 child_[0]->set_alpha_(*row_begin, col_end + 1);
-                assert(child_[0]->size() == rank0(beta.size()));
+                assert(child_[0]->size() == rank0(beta_.size()));
             }
 
             if (prefices[1].col == -1llu) {
                 child_[1] = new Node(row_end - split);
                 child_[1]->set_alpha_(*split, col_end + 1);
-                assert(child_[1]->size() == rank1(beta.size()));
+                assert(child_[1]->size() == rank1(beta_.size()));
             }
 
             std::lock_guard<std::mutex> lock(mtx);
@@ -774,8 +774,8 @@ namespace annotate {
         return root ? root->size() : 0;
     }
 
-    bool WaveletTrie::Node::is_leaf() {
-        return all_zero;
+    bool WaveletTrie::Node::is_leaf() const {
+        return (popcount == 0);
     }
 
     bool WaveletTrie::Node::check(bool ind) {

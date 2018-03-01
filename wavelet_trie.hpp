@@ -196,7 +196,7 @@ namespace annotate {
 
             void fill_ancestors(Node *othnode, bool ind, const size_t i);
 
-            bool is_leaf();
+            bool is_leaf() const;
 
             template <class Container>
             static void push_child(
