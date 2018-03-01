@@ -824,10 +824,10 @@ namespace annotate {
                 jnode = jnode->child_[0];
             }
             assert(lrank);
-            assert(jnode->popcount || (jnode->all_zero && jnode->size() == lrank));
+            assert(jnode->popcount || (!jnode->popcount && jnode->size() == lrank));
             if (jnode->popcount) {
                 assert(lrank + jnode->popcount == jnode->size());
-                assert(!jnode->all_zero);
+                //assert(!jnode->all_zero);
                 jnode->child_[0] = new Node(lrank);
             }
         }
@@ -835,8 +835,9 @@ namespace annotate {
 
     void WaveletTrie::Node::fill_ancestors(Node *othnode, bool ind, const size_t i) {
         if (child_[ind]) {
-            if (!ind && othnode->all_zero && !all_zero) {
-            //if (!ind && (popcount - othnode->popcount) && !othnode->popcount) {
+            //if (!ind && othnode->all_zero && !all_zero) {
+            if (!ind && othnode->is_leaf() && !othnode->child_[0] && !othnode->child_[1] && (popcount - othnode->popcount)) {
+                assert(popcount);
                 assert(othnode->popcount == 0);
                 //TODO: fix position when i != size()
                 fill_left(true);
@@ -845,7 +846,8 @@ namespace annotate {
             assert(child_[!ind] || (popcount == othnode->popcount));
             if (othnode->child_[ind]) {
                 std::swap(child_[ind], othnode->child_[ind]);
-                if (!ind && all_zero && !othnode->all_zero) {
+                //if (!ind && all_zero && !othnode->all_zero) {
+                if (!ind && (popcount == othnode->popcount) && !othnode->is_leaf()) {
                     //TODO: correct position when i != size() ?
                     fill_left(false);
                 }
