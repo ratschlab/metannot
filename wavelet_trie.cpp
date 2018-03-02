@@ -394,12 +394,15 @@ namespace annotate {
             exit(1);
         }
         //std::cout << (size_t)val << "\n";
+        assert(!popcount == !val);
+        /*
         if (!popcount) {
-            all_zero = true;
+            //all_zero = true;
             assert(!val);
         } else {
             assert(val);
         }
+        */
         if (val & 1) {
             //left child exists
             child_[0] = new Node();
@@ -703,7 +706,8 @@ namespace annotate {
     }
 
     WaveletTrie::Node::Node(const size_t count)
-      : beta_(beta_t(bv_t(count))), all_zero(true), popcount(0), support(false) {}
+      : beta_(beta_t(bv_t(count))), popcount(0), support(false) {}
+      //: beta_(beta_t(bv_t(count))), all_zero(true), popcount(0), support(false) {}
         //set_beta_(beta_t(bv_t(count)));
     //}
 
@@ -715,7 +719,7 @@ namespace annotate {
     WaveletTrie::Node::Node(const WaveletTrie::Node &that)
         : alpha_(that.alpha_), beta_(that.beta_),
           rank1_(that.rank1_), rank0_(that.rank0_),
-          all_zero(that.all_zero),
+          //all_zero(that.all_zero),
           popcount(that.popcount),
           support(that.support) {
         if (that.child_[0]) {
@@ -729,7 +733,7 @@ namespace annotate {
     void WaveletTrie::Node::swap(WaveletTrie::Node&& that) {
         this->alpha_ = that.alpha_;
         this->beta_ = that.beta_;
-        this->all_zero = that.all_zero;
+        //this->all_zero = that.all_zero;
         this->popcount = that.popcount;
         this->rank1_ = that.rank1_;
         this->rank0_ = that.rank0_;
@@ -851,12 +855,13 @@ namespace annotate {
                     //TODO: correct position when i != size() ?
                     fill_left(false);
                 }
-                all_zero = othnode->all_zero;
-                assert(!all_zero);
+                //all_zero = othnode->all_zero;
+                //assert(!all_zero);
+                assert(popcount);
                 assert(popcount == rank1(size()));
             } else if (!ind && popcount && size() > popcount) {
                 assert(size() - popcount == rank0(size()));
-                all_zero = false;
+                //all_zero = false;
                 child_[ind] = new Node(size() - popcount);
             }
         }
@@ -919,7 +924,7 @@ namespace annotate {
             curnode->fill_ancestors(othnode, 0, il);
             curnode->fill_ancestors(othnode, 1, ir);
             if (left) {
-                assert(!curnode->all_zero);
+                //assert(!curnode->all_zero);
                 assert(il <= curnode->child_[0]->size());
                 assert(curnode->size() - curnode->popcount
                         == curnode->child_[0]->size() + othnode->child_[0]->size()
@@ -934,7 +939,8 @@ namespace annotate {
                 }
             }
             if (right) {
-                assert(!curnode->all_zero);
+                //assert(!curnode->all_zero);
+                assert(curnode->popcount);
                 assert(ir <= curnode->child_[1]->size());
                 assert(curnode->popcount == curnode->child_[1]->size() + othnode->child_[1]->size());
                 curnode = curnode->child_[1];
@@ -985,7 +991,7 @@ namespace annotate {
 #ifndef NPRINT
         std::cout << curnode->alpha_ << ":" << curnode->beta_ << ";" << curnode->is_leaf();
         if (cur > -1) {
-            assert(!curnode->all_zero);
+            //assert(!curnode->all_zero);
             std::cout << "," << curnode->child_[cur]->alpha_ << ":" << curnode->child_[cur]->beta_ << ";" << curnode->child_[cur]->is_leaf();
         }
         std::cout << "\t";
@@ -994,12 +1000,12 @@ namespace annotate {
 #ifndef NPRINT
         std::cout << othnode->alpha_ << ":" << othnode->beta_ << ";" << othnode->is_leaf();
         if (oth > -1) {
-            assert(!othnode->all_zero);
+            //assert(!othnode->all_zero);
             std::cout << "," << othnode->child_[oth]->alpha_ << ":" << othnode->child_[oth]->beta_ << ";" << othnode->child_[oth]->is_leaf();
         }
         std::cout << "\t->\t";
 #endif
-        assert((curnode->all_zero && othnode->all_zero) || (curnode->rank1(curnode->size()) + othnode->rank1(othnode->size())));
+        //assert((curnode->all_zero && othnode->all_zero) || (curnode->rank1(curnode->size()) + othnode->rank1(othnode->size())));
         cur++;
         oth++;
         assert(curnode->alpha_ == othnode->alpha_);
@@ -1151,9 +1157,9 @@ namespace annotate {
             child->support = false;
             child->child_[0] = child_[0];
             child->child_[1] = child_[1];
-            child->all_zero = all_zero;
+            //child->all_zero = all_zero;
             child->popcount = popcount;
-            all_zero = false;
+            //all_zero = false;
             bool beta_bit = bit_test(alpha_, length);
             //set_beta_(bv_t(size(), beta_bit));
             beta_ = beta_t(bv_t(size(), beta_bit));
