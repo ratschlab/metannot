@@ -18,7 +18,8 @@ namespace annotate {
     typedef sdsl::sd_vector<> sd_t;
 
     typedef cpp_int alpha_t;
-    typedef bv_t beta_t;
+    typedef rrr_t beta_t;
+    //typedef bv_t beta_t;
     typedef beta_t::rank_1_type rank1_t;
     typedef beta_t::rank_0_type rank0_t;
 
@@ -102,8 +103,9 @@ namespace annotate {
             bool operator==(const WaveletTrie &other) const;
             bool operator!=(const WaveletTrie &other) const;
 
-        private:
+        public:
             class Node;
+        private:
             Node* root;
         //public:
         //    typedef std::pair<Node*, size_t> iterator;
@@ -163,7 +165,7 @@ namespace annotate {
             rank1_t rank1_;
             rank0_t rank0_;
             Node *child_[2] = {NULL, NULL};
-            bool all_zero = false;
+            //bool all_zero = false;
             size_t popcount = 0;
             bool support = false;
 

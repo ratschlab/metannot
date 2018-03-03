@@ -207,25 +207,27 @@ namespace annotate {
 
     //TODO: align get_int to blocks in source
     template <typename Vector>
-    bv_t insert_zeros(const Vector &target, const size_t count, const size_t i) {
-        if (!count)
-            return target;
+    beta_t insert_zeros(const Vector &target, const size_t count, const size_t i) {
+        if (!count) {
+            beta_t target_b(target);
+            return target_b;
+        }
         if (!target.size()) {
-            return bv_t(count);
+            auto count_b = beta_t(bv_t(count));
+            return count_b;
         }
         bv_t merged;
         size_t j;
         //assume limb size of 64
         if (i) {
-            merged = target;
+            //merged = target;
             merged.resize(target.size() + count);
-            /*
             j = 0;
             for (; j + 64 <= i; j += 64) {
                 merged.set_int(j, target.get_int(j));
             }
-            merged.set_int(j, target.get_int(j, i - j), i - j);
-            */
+            if (i - j)
+                merged.set_int(j, target.get_int(j, i - j), i - j);
             /* //OLD CODE
             j = 0;
             for (; j + 64 <= count; j += 64) {
@@ -248,29 +250,32 @@ namespace annotate {
         }
         if (target.size() - j)
             merged.set_int(count + j, target.get_int(j, target.size() - j), target.size() - j);
-        return merged;
+        beta_t merged_b(merged);
+        return merged_b;
     }
 
     template <typename Vector>
-    bv_t insert_range(const Vector &target, const Vector &source, const size_t i) {
+    beta_t insert_range(const Vector &target, const Vector &source, const size_t i) {
         if (!target.size()) {
             assert(i == 0);
-            return source;
+            beta_t source_b(source);
+            return source_b;
         }
-        if (!source.size())
-            return target;
+        if (!source.size()) {
+            beta_t target_b(target);
+            return target_b;
+        }
         bv_t merged;
         size_t j;
         if (i) {
-            merged = target;
+            //merged = target;
             merged.resize(target.size() + source.size());
-            /*
             j = 0;
             for (; j + 64 <= i; j += 64) {
                 merged.set_int(j, target.get_int(j));
             }
-            merged.set_int(j, target.get_int(j, i - j), i - j);
-            */
+            if (i - j)
+                merged.set_int(j, target.get_int(j, i - j), i - j);
             j = 0;
             for (; j + 64 <= source.size(); j += 64) {
                 merged.set_int(i + j, source.get_int(j));
@@ -278,15 +283,14 @@ namespace annotate {
             if (source.size() - j)
                 merged.set_int(i + j, source.get_int(j, source.size() - j), source.size() - j);
         } else {
-            merged = source;
-            /*
+            //merged = source;
             merged.resize(target.size() + source.size());
             j = 0;
             for (; j + 64 <= source.size(); j += 64) {
                 merged.set_int(j, source.get_int(j));
             }
-            merged.set_int(j, source.get_int(j, source.size() - j), source.size() - j);
-            */
+            if (source.size() - j)
+                merged.set_int(j, source.get_int(j, source.size() - j), source.size() - j);
         }
         j = i;
         for (; j + 64 <= target.size(); j += 64) {
@@ -307,25 +311,40 @@ namespace annotate {
         }
         assert(merged == merged_test);
         */
-        return merged;
+        //TODO: not doing this cases invalid free
+        //submit bugfix?
+        beta_t merged_b(merged);
+        return merged_b;
     }
 
     WaveletTrie::WaveletTrie() : root(NULL) { }
 
     size_t WaveletTrie::serialize(std::ostream &out) const {
-        return root->serialize(out);
+        if (root)
+            return root->serialize(out);
+        else
+            return Node().serialize(out);
     }
 
     size_t WaveletTrie::load(std::istream &in) {
-        if (!root) {
-            root = new Node();
+        if (root) {
+            delete root;
         }
-        return root->load(in);
+        root = new Node();
+        size_t size = root->load(in);
+        if (!root->beta_.size()) {
+            delete root;
+            root = NULL;
+            return 0;
+        }
+        return size;
     }
 
     bool WaveletTrie::operator==(const WaveletTrie &other) const {
         if ((bool)root != (bool)other.root)
             return false;
+        if (!root)
+            return true;
         return *root == *other.root;
     }
 
@@ -370,6 +389,7 @@ namespace annotate {
         if (child_[1])
             delete child_[1];
         alpha_ = ::annotate::load(in);
+        /*
         rrr_t beta;
         beta.load(in);
         //decompress
@@ -381,9 +401,14 @@ namespace annotate {
             beta_.set_int(i, limb);
             popcount += __builtin_popcountll(limb);
         }
-        size_t limb = beta.get_int(i, beta.size() - i);
-        beta_.set_int(i, limb, beta.size() - i);
-        popcount += __builtin_popcountll(limb);
+        if (beta.size() - i) {
+            size_t limb = beta.get_int(i, beta.size() - i);
+            beta_.set_int(i, limb, beta.size() - i);
+            popcount += __builtin_popcountll(limb);
+        }
+        */
+        beta_.load(in);
+        popcount = beta_.size() ? rank1(size()) : 0;
         char val;
         in.read(&val, 1);
         if (val >= '0') {
@@ -423,7 +448,7 @@ namespace annotate {
 #endif
             return false;
         }
-        if (beta_ != other.beta_) {
+        if (sdsl::util::to_string(beta_) != sdsl::util::to_string(other.beta_)) {
 #ifdef NPRINT
             print(); other.print();
 #endif
@@ -478,6 +503,10 @@ namespace annotate {
     }
 
     void WaveletTrie::print() {
+        if (!root) {
+            std::cout << ":\t1:;1\n";
+            return;
+        }
         std::stack<std::pair<Node*,std::string>> nodestack;
         nodestack.emplace(root,"");
         while (nodestack.size()) {
@@ -625,17 +654,20 @@ namespace annotate {
             //set_alpha_(*row_begin, col, col_end);
 
             //set beta and compute common prefices
-            //bv_t beta;
-            beta_.resize(row_end - row_begin);
+            bv_t beta;
+            //beta_.resize(row_end - row_begin);
+            beta.resize(row_end - row_begin);
             Prefix prefices[2];
             Iterator split = row_begin;
             std::vector<typename std::iterator_traits<Iterator>::value_type> right_children;
-            sdsl::util::set_to_value(beta_, 0);
+            sdsl::util::set_to_value(beta, 0);
+            //sdsl::util::set_to_value(beta_, 0);
             auto begin = std::make_move_iterator(row_begin);
             auto end = std::make_move_iterator(row_end);
             for (auto it = begin; it != end; ++it) {
                 if (bit_test(*it, col_end)) {
-                    beta_[it - begin] = 1;
+                    beta[it - begin] = 1;
+                    //beta_[it - begin] = 1;
                     right_children.emplace_back(*it);
                     prefices[1].col = next_different_bit_(
                             right_children.front(), right_children.back(),
@@ -651,6 +683,7 @@ namespace annotate {
             }
             popcount = right_children.size();
             //set_beta_(beta);
+            beta_ = beta_t(beta);
             support = false;
             assert(popcount == rank1(size()));
             //distribute to left and right children
@@ -886,14 +919,11 @@ namespace annotate {
             i = curnode->size();
         }
 
-
         assert(curnode->size());
         assert(othnode->size());
         assert(i <= curnode->size());
 
         while (curnode && othnode) {
-
-            //assert(curnode && othnode);
             assert(curnode->size());
             assert(i <= curnode->size());
             assert(curnode->check(0));
@@ -924,7 +954,6 @@ namespace annotate {
             curnode->fill_ancestors(othnode, 0, il);
             curnode->fill_ancestors(othnode, 1, ir);
             if (left) {
-                //assert(!curnode->all_zero);
                 assert(il <= curnode->child_[0]->size());
                 assert(curnode->size() - curnode->popcount
                         == curnode->child_[0]->size() + othnode->child_[0]->size()
@@ -939,7 +968,6 @@ namespace annotate {
                 }
             }
             if (right) {
-                //assert(!curnode->all_zero);
                 assert(curnode->popcount);
                 assert(ir <= curnode->child_[1]->size());
                 assert(curnode->popcount == curnode->child_[1]->size() + othnode->child_[1]->size());
