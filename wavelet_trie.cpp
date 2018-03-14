@@ -6,7 +6,7 @@
 
 namespace annotate {
 
-    std::mutex mtx;
+    std::mutex construct_mtx, merge_mtx;
 
     bool is_nonzero(const cpp_int &a) {
         return a != 0;
@@ -207,14 +207,12 @@ namespace annotate {
 
     //TODO: align get_int to blocks in source
     template <typename Vector>
-    beta_t insert_zeros(const Vector &target, const size_t count, const size_t i) {
-        if (!count) {
-            beta_t target_b(target);
-            return target_b;
-        }
+    bv_t insert_zeros(const Vector &target, const size_t count, const size_t i) {
+        //if (!count) {
+        //    return target;
+        //}
         if (!target.size()) {
-            auto count_b = beta_t(bv_t(count));
-            return count_b;
+            return bv_t(count);
         }
         bv_t merged;
         size_t j;
@@ -226,7 +224,7 @@ namespace annotate {
             for (; j + 64 <= i; j += 64) {
                 merged.set_int(j, target.get_int(j));
             }
-            if (i - j)
+            if (i > j)
                 merged.set_int(j, target.get_int(j, i - j), i - j);
             /* //OLD CODE
             j = 0;
@@ -236,10 +234,12 @@ namespace annotate {
             if (count - j)
                 merged.set_int(i + j, 0, count - j);
             */
-            j = ((i + 63) & -64llu);
-            //WARNING: the region from merged.size() to j is not initialized
-            merged.set_int(i, 0, std::min(j, merged.size()) - i);
-            std::fill(merged.data() + (j >> 6), merged.data() + (merged.capacity() >> 6), 0);
+            if (count) {
+                j = ((i + 63) & -64llu);
+                //WARNING: the region from merged.size() to j is not initialized
+                merged.set_int(i, 0, std::min(j, merged.size()) - i);
+                std::fill(merged.data() + (j >> 6), merged.data() + (merged.capacity() >> 6), 0);
+            }
         } else {
             merged = bv_t(count);
             merged.resize(target.size() + count);
@@ -248,55 +248,42 @@ namespace annotate {
         for (; j + 64 <= target.size(); j += 64) {
             merged.set_int(count + j, target.get_int(j));
         }
-        if (target.size() - j)
+        if (target.size() > j)
             merged.set_int(count + j, target.get_int(j, target.size() - j), target.size() - j);
-        beta_t merged_b(merged);
-        return merged_b;
+        return merged;
     }
 
     template <typename Vector>
-    beta_t insert_range(const Vector &target, const Vector &source, const size_t i) {
+    bv_t insert_range(const Vector &target, const Vector &source, const size_t i) {
+        /*
         if (!target.size()) {
             assert(i == 0);
-            beta_t source_b(source);
-            return source_b;
+            return source;
         }
         if (!source.size()) {
-            beta_t target_b(target);
-            return target_b;
+            return target;
         }
+        */
         bv_t merged;
-        size_t j;
-        if (i) {
-            //merged = target;
-            merged.resize(target.size() + source.size());
-            j = 0;
-            for (; j + 64 <= i; j += 64) {
-                merged.set_int(j, target.get_int(j));
-            }
-            if (i - j)
-                merged.set_int(j, target.get_int(j, i - j), i - j);
-            j = 0;
-            for (; j + 64 <= source.size(); j += 64) {
-                merged.set_int(i + j, source.get_int(j));
-            }
-            if (source.size() - j)
-                merged.set_int(i + j, source.get_int(j, source.size() - j), source.size() - j);
-        } else {
-            //merged = source;
-            merged.resize(target.size() + source.size());
-            j = 0;
-            for (; j + 64 <= source.size(); j += 64) {
-                merged.set_int(j, source.get_int(j));
-            }
-            if (source.size() - j)
-                merged.set_int(j, source.get_int(j, source.size() - j), source.size() - j);
+        merged.resize(target.size() + source.size());
+        size_t j = 0;
+        j = 0;
+        for (; j + 64 <= i; j += 64) {
+            merged.set_int(j, target.get_int(j));
         }
+        if (i > j)
+            merged.set_int(j, target.get_int(j, i - j), i - j);
+        j = 0;
+        for (; j + 64 <= source.size(); j += 64) {
+            merged.set_int(i + j, source.get_int(j));
+        }
+        if (source.size() > j)
+            merged.set_int(i + j, source.get_int(j, source.size() - j), source.size() - j);
         j = i;
         for (; j + 64 <= target.size(); j += 64) {
             merged.set_int(source.size() + j, target.get_int(j));
         }
-        if (target.size() - j)
+        if (target.size() > j)
             merged.set_int(source.size() + j, target.get_int(j, target.size() - j), target.size() - j);
         /*
         //TODO: move this to a unit test
@@ -313,8 +300,7 @@ namespace annotate {
         */
         //TODO: not doing this cases invalid free
         //submit bugfix?
-        beta_t merged_b(merged);
-        return merged_b;
+        return merged;
     }
 
     WaveletTrie::WaveletTrie() : root(NULL) { }
@@ -443,46 +429,46 @@ namespace annotate {
 
     bool WaveletTrie::Node::operator==(const WaveletTrie::Node &other) const {
         if (alpha_ != other.alpha_) {
-#ifdef NPRINT
+#ifndef NPRINT
             print(); other.print();
 #endif
             return false;
         }
         if (sdsl::util::to_string(beta_) != sdsl::util::to_string(other.beta_)) {
-#ifdef NPRINT
+#ifndef NPRINT
             print(); other.print();
 #endif
             return false;
         }
         if (popcount != other.popcount) {
-#ifdef NPRINT
+#ifndef NPRINT
             print(); other.print();
 #endif
             return false;
         }
         /*
         if (all_zero != other.all_zero) {
-#ifdef NPRINT
+#ifndef NPRINT
             print(); other.print();
 #endif
             return false;
         }
         */
         if ((bool)child_[0] != (bool)other.child_[0]) {
-#ifdef NPRINT
+#ifndef NPRINT
             std::cout << "left failed\n";
 #endif
             return false;
         }
         if ((bool)child_[1] != (bool)other.child_[1]) {
-#ifdef NPRINT
+#ifndef NPRINT
             std::cout << "right failed\n";
 #endif
             return false;
         }
         bool left_val = true;
         if (child_[0]) {
-#ifdef NPRINT
+#ifndef NPRINT
             std::cout << "left\n";
 #endif
             left_val = *child_[0] == *other.child_[0];
@@ -490,7 +476,7 @@ namespace annotate {
         if (!left_val)
             return false;
         if (child_[1]) {
-#ifdef NPRINT
+#ifndef NPRINT
             std::cout << "right\n";
 #endif
             return *child_[1] == *other.child_[1];
@@ -615,20 +601,19 @@ namespace annotate {
             } else {
 //#pragma omp parallel
 //#pragma omp single nowait
-                std::vector<std::future<void>> thread_queue;
-                //std::vector<std::function<void()>> thread_queue;
-                thread_queue.reserve(row_end - row_begin);
+                //std::vector<std::future<void>> thread_queue;
+                utils::ThreadPool thread_queue(10);
+                //thread_queue.reserve(row_end - row_begin);
                 root = new Node();
                 root->set_alpha_(*row_begin, 0, prefix.col);
-                thread_queue.push_back(std::async(std::launch::deferred, [=, &thread_queue]() {
-                //thread_queue.push_back([=, &thread_queue]() {
+                //thread_queue.push_back(std::async(std::launch::deferred, [=, &thread_queue]() {
+                thread_queue.enqueue([=, &thread_queue]() {
                     root->fill_beta(row_begin, row_end, 0, thread_queue, prefix);
-                //});
-                }));
-                for (size_t i = 0; i < thread_queue.size(); ++i) {
-                    thread_queue.at(i).get();
-                    //thread_queue.at(i)();
-                }
+                });
+                //for (size_t i = 0; i < thread_queue.size(); ++i) {
+                //    thread_queue.at(i).get();
+                //}
+                thread_queue.join();
                 //root = new Node(row_begin, row_end, 0, prefix);
             }
         } else {
@@ -643,8 +628,7 @@ namespace annotate {
     template <class Iterator>
     //WaveletTrie::Node::Node(const Iterator &row_begin, const Iterator &row_end,
     void WaveletTrie::Node::fill_beta(const Iterator &row_begin, const Iterator &row_end,
-            //const size_t &col, std::vector<std::function<void()>> &thread_queue, Prefix prefix) {
-            const size_t &col, std::vector<std::future<void>> &thread_queue, Prefix prefix) {
+            const size_t &col, utils::ThreadPool &thread_queue, Prefix prefix) {
         if (row_end > row_begin) {
             assert(prefix.col != -1llu);
             assert(!prefix.allequal);
@@ -705,17 +689,16 @@ namespace annotate {
                 assert(child_[1]->size() == rank1(beta_.size()));
             }
 
-            std::lock_guard<std::mutex> lock(mtx);
             //then recursive calls
             if (prefices[0].col != -1llu) {
                 prefices[0].allequal = false;
                 child_[0] = new Node();
                 child_[0]->set_alpha_(*row_begin, col_end + 1, prefices[0].col);
-                thread_queue.push_back(std::async(std::launch::deferred, [=, &thread_queue]() {
-                //thread_queue.push_back([=, &thread_queue]() {
+                std::lock_guard<std::mutex> lock(construct_mtx);
+                thread_queue.enqueue([=, &thread_queue]() {
+                //thread_queue.push_back(std::async(std::launch::deferred, [=, &thread_queue]() {
                     child_[0]->fill_beta(row_begin, split, col_end + 1, thread_queue, prefices[0]);
-                //});
-                }));
+                });
                 //child_[0]->fill_beta(row_begin, split, col_end + 1, thread_queue, prefices[0]);
 
                 //child_[0] = new Node(row_begin, split, col_end + 1, prefices[0]);
@@ -726,11 +709,11 @@ namespace annotate {
                 prefices[1].allequal = false;
                 child_[1] = new Node();
                 child_[1]->set_alpha_(*split, col_end + 1, prefices[1].col);
-                thread_queue.push_back(std::async(std::launch::deferred, [=, &thread_queue]() {
-                //thread_queue.push_back([=, &thread_queue]() {
+                std::lock_guard<std::mutex> lock(construct_mtx);
+                thread_queue.enqueue([=, &thread_queue]() {
+                //thread_queue.push_back(std::async(std::launch::deferred, [=, &thread_queue]() {
                     child_[1]->fill_beta(split, row_end, col_end + 1, thread_queue, prefices[1]);
-                //});
-                }));
+                });
                 //child_[1]->fill_beta(split, row_end, col_end + 1, thread_queue, prefices[1]);
                 //child_[1] = new Node(split, row_end, col_end + 1, prefices[1]);
                 //assert(child_[1]->size() == rank1(beta.size()));
@@ -779,7 +762,6 @@ namespace annotate {
 
     template <class Container>
     WaveletTrie::WaveletTrie(Container &rows) : WaveletTrie::WaveletTrie(rows.begin(), rows.end()) {}
-
 
     WaveletTrie::~WaveletTrie() {
         delete root;
@@ -855,7 +837,7 @@ namespace annotate {
                 lchild->move_label_down_(lsb(lchild->alpha_));
                 assert(lchild->alpha_ == 1 || ((lchild->alpha_ | 1) == lchild->alpha_ + 1));
                 //lchild->set_beta_(insert_zeros(lchild->beta_, lrank - lchild->size(), rightside ? lchild->size() : 0));
-                lchild->beta_ = insert_zeros(lchild->beta_, lrank - lchild->size(), rightside ? lchild->size() : 0);
+                lchild->beta_ = beta_t(insert_zeros(lchild->beta_, lrank - lchild->size(), rightside ? lchild->size() : 0));
                 lchild->support = false;
                 lrank -= lchild->popcount;
                 jnode = jnode->child_[0];
@@ -908,16 +890,30 @@ namespace annotate {
             std::swap(root, wtr.root);
             return;
         }
-        assert(root && wtr.root);
-#pragma omp parallel
-#pragma omp single nowait
-        Node::merge(root, wtr.root, i);
+        if (i == -1llu) {
+            i = size();
+        }
+        utils::ThreadPool thread_queue(10);
+        //std::vector<std::future<void>> thread_queue;
+        //thread_queue.push_back(std::async(std::launch::async, [=, &thread_queue, &wtr]() {
+        //    Node::merge(root, wtr.root, i, thread_queue);
+        //}));
+        thread_queue.enqueue([=, &thread_queue, &wtr]() {
+            Node::merge(root, wtr.root, i, thread_queue);
+        });
+        //for (size_t i = 0; i < thread_queue.size(); ++i) {
+        //    thread_queue.at(i).get();
+        //}
+        thread_queue.join();
+//#pragma omp parallel
+//#pragma omp single nowait
+//        Node::merge(root, wtr.root, i);
     }
 
-    void WaveletTrie::Node::merge(Node *curnode, Node *othnode, size_t i) {
-        if (i == -1llu) {
-            i = curnode->size();
-        }
+    void WaveletTrie::Node::merge(Node *curnode, Node *othnode, size_t i, utils::ThreadPool &thread_queue) {
+        //if (i == -1llu) {
+        //    i = curnode->size();
+        //}
 
         assert(curnode->size());
         assert(othnode->size());
@@ -953,14 +949,57 @@ namespace annotate {
             bool right = curnode->child_[1] && othnode->child_[1];
             curnode->fill_ancestors(othnode, 0, il);
             curnode->fill_ancestors(othnode, 1, ir);
+            if ((bool)curnode->child_[0] != (bool)curnode->child_[1]) {
+                std::cerr << "ERROR: merging imbalanced error" << std::endl;
+                exit(1);
+            }
+
+            if (left && right) {
+                //send smaller problem to own thread
+                if (std::min(curnode->child_[0]->size(), othnode->child_[0]->size()) > std::min(curnode->child_[1]->size(), othnode->child_[1]->size())) {
+                    std::lock_guard<std::mutex> lock(merge_mtx);
+                    thread_queue.enqueue([=, &thread_queue]() {
+                    //thread_queue.push_back(std::async(std::launch::async, [=, &thread_queue]() {
+                        merge(curnode->child_[1], othnode->child_[1], ir, thread_queue);
+                    });
+                    curnode = curnode->child_[0];
+                    othnode = othnode->child_[0];
+                    i = il;
+                } else {
+                    std::lock_guard<std::mutex> lock(merge_mtx);
+                    thread_queue.enqueue([=, &thread_queue]() {
+                    //thread_queue.push_back(std::async(std::launch::async, [=, &thread_queue]() {
+                        merge(curnode->child_[0], othnode->child_[0], il, thread_queue);
+                    });
+                    curnode = curnode->child_[1];
+                    othnode = othnode->child_[1];
+                    i = ir;
+                }
+            } else if (left) {
+                curnode = curnode->child_[0];
+                othnode = othnode->child_[0];
+                i = il;
+            } else if (right) {
+                curnode = curnode->child_[1];
+                othnode = othnode->child_[1];
+                i = ir;
+            } else {
+                curnode = NULL;
+                othnode = NULL;
+            }
+
+            /*
             if (left) {
                 assert(il <= curnode->child_[0]->size());
                 assert(curnode->size() - curnode->popcount
                         == curnode->child_[0]->size() + othnode->child_[0]->size()
                 );
                 if (right) {
-#pragma omp task if (curnode->child_[0]->size() > 32)
-                    Node::merge(curnode->child_[0], othnode->child_[0], il);
+//#pragma omp task if (curnode->child_[0]->size() > 32)
+//                    Node::merge(curnode->child_[0], othnode->child_[0], il);
+                    thread_queue.push_back(std::async(std::launch::async, [=, &thread_queue]() {
+                        merge(curnode->child_[0], othnode->child_[0], il, thread_queue);
+                    }));
                 } else {
                     curnode = curnode->child_[0];
                     othnode = othnode->child_[0];
@@ -978,6 +1017,7 @@ namespace annotate {
                 curnode = NULL;
                 othnode = NULL;
             }
+            */
         }
     }
 
@@ -1034,9 +1074,15 @@ namespace annotate {
         std::cout << "\t->\t";
 #endif
         //assert((curnode->all_zero && othnode->all_zero) || (curnode->rank1(curnode->size()) + othnode->rank1(othnode->size())));
-        cur++;
-        oth++;
         assert(curnode->alpha_ == othnode->alpha_);
+        if (cur > -1 && oth > -1 && curnode->child_[0] && othnode->child_[0]) {
+            std::cerr << "ERROR: extra zero bit" << std::endl;
+            exit(1);
+        }
+        if (cur > -1 && oth > -1 && curnode->child_[1] && othnode->child_[1]) {
+            std::cerr << "ERROR: extra one bit" << std::endl;
+            exit(1);
+        }
         return true;
     }
 
@@ -1267,7 +1313,7 @@ namespace annotate {
         */
         curnode->popcount += othnode->popcount;
         //curnode->set_beta_(beta_new);
-        curnode->beta_ = insert_range(curnode->beta_, othnode->beta_, i);
+        curnode->beta_ = beta_t(insert_range(curnode->beta_, othnode->beta_, i));
         curnode->support = false;
         assert(curnode->popcount == curnode->rank1(curnode->size()));
     }

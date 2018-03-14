@@ -10,6 +10,9 @@
 #include <functional>
 #include <boost/multiprecision/gmp.hpp>
 
+#include "utils.hpp"
+
+
 namespace annotate {
     typedef boost::multiprecision::mpz_int cpp_int;
     typedef cpp_int annot_t;
@@ -133,8 +136,7 @@ namespace annotate {
             //        const size_t &col = 0, Prefix prefix = Prefix());
             template <class Iterator>
             void fill_beta(const Iterator &row_begin, const Iterator &row_end,
-                    //const size_t &col, std::vector<std::function<void()>> &thread_queue, Prefix prefix = Prefix());
-                    const size_t &col, std::vector<std::future<void>> &thread_queue, Prefix prefix = Prefix());
+                    const size_t &col, utils::ThreadPool &thread_queue, Prefix prefix = Prefix());
 
             //swap
             void swap(Node&& that);
@@ -155,7 +157,7 @@ namespace annotate {
 
             size_t rank0(const size_t i);
 
-            static void merge(Node *curnode, Node *othnode, size_t i = -1llu);
+            static void merge(Node *curnode, Node *othnode, size_t i, utils::ThreadPool &thread_queue);
 
             void print(std::ostream &out = std::cout) const;
 

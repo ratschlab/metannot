@@ -247,6 +247,12 @@ int main(int argc, char** argv) {
         mem_lim = atoi(memlim);
     }
 
+    const char *maxtest = std::getenv("MAXTEST");
+    size_t max_test = 0;
+    if (maxtest) {
+        max_test = atol(maxtest);
+    }
+
     //std::vector<annotate::WaveletTrie*> wtrs;
     std::vector<std::future<annotate::WaveletTrie*>> wtrs;
 
@@ -301,7 +307,7 @@ int main(int argc, char** argv) {
                     delete nums;
                     break;
                 }
-                if (test != NULL) {
+                if (test != NULL && nums_ref.size() < max_test) {
                     nums_ref.reserve(nums_ref.size() + nums->size());
                     std::transform(nums->begin(), nums->end(), std::back_inserter(nums_ref), to_num);
                 }
@@ -358,24 +364,28 @@ int main(int argc, char** argv) {
         //std::cout << std::endl;
         fin.close();
     }
+    std::cout << std::endl;
 
-    if (wtrs.size() == 0)
-        return 0;
+    //if (wtrs.size() == 0)
+    //    return 0;
 
-    if (n_jobs > 1)
-        omp_set_num_threads(n_jobs);
+    //if (n_jobs > 1)
+        //omp_set_num_threads(n_jobs);
 
     //auto *wtr = wtrs[0];
-    auto *wtr = wtrs[0].get();
-    std::cout << "Merging" << std::endl;
-    for (auto it = wtrs.begin() + 1; it != wtrs.end(); ++it) {
-        auto *curwtr = it->get();
-        wtr->insert(*curwtr);
-        delete curwtr;
-        //wtr->insert(**it);
-        //wtrs[0]->insert(**it);
-        //delete *it;
-        std::cout << "." << std::flush;
+    annotate::WaveletTrie *wtr = new annotate::WaveletTrie();
+    if (wtrs.size()) {
+        //wtr = wtrs[0].get();
+        std::cout << "Merging" << std::endl;
+        for (auto it = wtrs.begin(); it != wtrs.end(); ++it) {
+            auto *curwtr = it->get();
+            wtr->insert(*curwtr);
+            delete curwtr;
+            //wtr->insert(**it);
+            //wtrs[0]->insert(**it);
+            //delete *it;
+            std::cout << "." << std::flush;
+        }
     }
     std::cout << std::endl;
 
@@ -389,6 +399,8 @@ int main(int argc, char** argv) {
 #ifndef NPRINT
         wtr->print();
 #endif
+        Timer decomp_timer;
+        decomp_timer.reset();
         for (size_t i = 0; i < nums_ref.size(); ++i) {
             if (nums_ref.at(i) != wtr->at(i)) {
                 std::cerr << "Fail at " << i << "\n";
@@ -396,6 +408,9 @@ int main(int argc, char** argv) {
                 exit(1);
             }
         }
+        double decom_time = decomp_timer.elapsed();
+        std::cout << "Check time:\t" << decom_time << "\n";
+        std::cout << "Time per edge:\t" << decom_time / nums_ref.size() << "\n";
         std::cout << std::endl;
     }
     if (wtr) {
