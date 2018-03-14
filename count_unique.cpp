@@ -30,6 +30,26 @@ int main(int argc, char **argv) {
         exit(1);
     }
     std::ifstream fin(argv[1]);
+    if (std::getenv("RAW")) {
+        size_t num_rows = deserializeNumber(fin);
+        std::cout << "Num elements:\t" << num_rows << std::endl;
+        std::unordered_set<std::string> elements;
+        while (num_rows) {
+            size_t size = deserializeNumber(fin);
+            std::string curstring;
+            size_t index;
+            while (size) {
+                index = deserializeNumber(fin);
+                curstring += std::to_string(index) + ",";
+                size--;
+            }
+            elements.insert(curstring);
+            num_rows--;
+        }
+        std::cout << "Num uniq elements:\t" << elements.size() << std::endl;
+        fin.close();
+        return 0;
+    }
     boost::archive::binary_iarchive iarch(fin);
     std::unordered_map<std::string, std::set<size_t>> string_map;
     size_t num_elements;

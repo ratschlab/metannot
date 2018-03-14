@@ -71,6 +71,42 @@ int main(int argc, char **argv) {
     }
     size_t num_rows = deserializeNumber(fin);
     std::cout << "Rows:\t" << num_rows << std::endl;
+    size_t set_bits;
+    const char* setbits = std::getenv("SETBITS");
+    if (setbits) {
+        set_bits = atol(setbits);
+        std::cout << "Row size:\t" << BVSIZE << std::endl;
+        std::cout << "Set bits:\t" << set_bits << std::endl;
+        sdsl::sd_vector_builder builder(num_rows * BVSIZE, set_bits);
+        size_t counter = 0;
+        while (num_rows--) {
+            size_t size = deserializeNumber(fin);
+            if (size > (BVSIZE >> 6)) {
+                std::cerr << "More that " << BVSIZE << "bits" << std::endl;
+            }
+            for (size_t i = 0; i < (BVSIZE >> 6); ++i) {
+                size_t limb;
+                if (i < size) {
+                    limb = deserializeNumber(fin);
+                    size_t j = 0;
+                    for (size_t jj = limb; jj; jj >>= 1) {
+                        if (jj & 1) {
+                            builder.set(counter + j);
+                        }
+                        j++;
+                    }
+                    counter += BVSIZE;
+                } else {
+                    limb = 0;
+                }
+                fcout.write(reinterpret_cast<const char*>(&limb), sizeof(limb));
+            }
+        }
+        sdsl::sd_vector<>(builder).serialize(fout);
+        fout.close();
+        fcout.close();
+        return 0;
+    }
     sdsl::bit_vector bits(num_rows * BVSIZE);
     size_t counter = 0;
     while (num_rows--) {
